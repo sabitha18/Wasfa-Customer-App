@@ -1,0 +1,145 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../core/routing/app_routes.dart';
+import '../../core/theme/app_colors.dart';
+import '../../state/cart_state.dart';
+import '../../state/location_state.dart';
+
+/// Matches `.appbar` — top location row (`.ab-top`/`.ab-loc`/`.ab-act`) plus
+/// the `.search` bar underneath, in a single `PreferredSize` widget so it
+/// slots into `Scaffold.appBar`. Per the HTML's `renderAppbar()`, this shows
+/// on home/store/shop/wishlist/account — not on every screen.
+class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
+  const AppTopBar({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final cart = context.watch<CartState>();
+    final location = context.watch<LocationState>();
+    final areaLabel = location.area?.isNotEmpty == true ? location.area! : 'Current location';
+    final detailLabel = [location.street, location.governorate].where((s) => s != null && s!.isNotEmpty).join(' · ');
+
+    return AppBar(
+      backgroundColor: AppColors.white,
+      elevation: 0,
+      automaticallyImplyLeading: false,
+      toolbarHeight: preferredSize.height,
+      titleSpacing: 16,
+      title: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              GestureDetector(
+                onTap: () => context.read<LocationState>().retry(),
+                child: Row(children: [
+                  // .ab-loc .pin
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(color: AppColors.blush, borderRadius: BorderRadius.circular(11)),
+                    alignment: Alignment.center,
+                    child: const Icon(Icons.location_on_rounded, color: AppColors.rose, size: 18),
+                  ),
+                  const SizedBox(width: 8),
+                ]),
+              ),
+              // .ab-loc .tx — real current location, from LocationState
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => context.read<LocationState>().retry(),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Deliver to $areaLabel', overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: AppColors.navy, height: 1.15)),
+                      const SizedBox(height: 1),
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              detailLabel.isNotEmpty ? detailLabel : 'Tap to refresh location',
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 11, color: AppColors.muted),
+                            ),
+                          ),
+                          const Icon(Icons.chevron_right_rounded, size: 14, color: AppColors.muted),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              // .ab-act
+              IconBtn(icon: Icons.medication_outlined, onTap: () => Navigator.pushNamed(context, Routes.myRx)),
+              const SizedBox(width: 7),
+              IconBtn(
+                icon: Icons.shopping_bag_outlined,
+                badge: cart.cartCount > 0 ? cart.cartCount : null,
+                onTap: () => Navigator.pushNamed(context, Routes.cart),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // .search
+          GestureDetector(
+            onTap: () => Navigator.pushNamed(context, Routes.shop),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+              decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(12)),
+              child: const Row(
+                children: [
+                  Icon(Icons.search_rounded, size: 18, color: AppColors.muted),
+                  SizedBox(width: 9),
+                  Text('Search for products or stores', style: TextStyle(color: AppColors.muted, fontSize: 13)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Size get preferredSize => const Size.fromHeight(126);
+}
+
+class IconBtn extends StatelessWidget {
+  final IconData icon;
+  final int? badge;
+  final VoidCallback onTap;
+  const IconBtn({super.key, required this.icon, required this.onTap, this.badge});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(10)),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Center(child: Icon(icon, size: 18, color: AppColors.navy)),
+            if (badge != null)
+              Positioned(
+                top: -4,
+                right: -4,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                  decoration: const BoxDecoration(color: AppColors.rose, shape: BoxShape.circle),
+                  alignment: Alignment.center,
+                  child: Text('$badge', style: const TextStyle(color: Colors.white, fontSize: 9.5, fontWeight: FontWeight.w700)),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}

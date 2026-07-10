@@ -1,0 +1,28 @@
+name: wasfa_app
+description: WASFA — Kuwait smart healthcare & pharmacy marketplace (Patient App)
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  provider: ^6.1.2          # MVVM state management (ViewModel -> ChangeNotifier)
+  google_fonts: ^6.2.1      # DM Sans / Cairo, matches HTML design tokens
+  intl: ^0.19.0             # number/currency formatting (KWD 3-decimal)
+  shared_preferences: ^2.2.3 # local persistence, mirrors localStorage in the HTML prototype
+  uuid: ^4.4.0
+  http: ^1.2.0
+  share_plus: ^7.2.2
+  geolocator: ^11.0.0
+  geocoding: ^3.0.0
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
