@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/routing/app_routes.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/async_state_view.dart';
@@ -100,7 +101,16 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(it.productId != null ? (CatalogRepository.instance.findProduct(it.productId!)?.nameEn ?? '#${it.productId}') : 'Item', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                              // Prefer the server's own line-item name; only fall
+                              // back to a catalog lookup / id when it's absent.
+                              Text(
+                                it.name.isNotEmpty
+                                    ? it.name
+                                    : (it.productId != null
+                                        ? (CatalogRepository.instance.findProduct(it.productId!)?.nameEn ?? '#${it.productId}')
+                                        : 'Item'),
+                                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                              ),
                               Text('×${it.qty} · ${Formatters.money(it.price)}', style: const TextStyle(fontSize: 11, color: AppColors.muted)),
                             ],
                           ),
@@ -123,8 +133,18 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: () {
-                    context.read<OrdersState>().reorderInto(context.read<CartState>(), order.id);
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Added to cart')));
+                    final r = context.read<OrdersState>().reorderInto(context.read<CartState>(), order.id);
+                    final messenger = ScaffoldMessenger.of(context);
+                    final String msg;
+                    if (r.added == 0) {
+                      msg = 'These items are no longer available to reorder.';
+                    } else if (r.skipped > 0) {
+                      msg = 'Added ${r.added} item(s) to cart · ${r.skipped} no longer available';
+                    } else {
+                      msg = 'Added to cart';
+                    }
+                    messenger.showSnackBar(SnackBar(content: Text(msg)));
+                    if (r.added > 0) Navigator.pushNamed(context, Routes.cart);
                   },
                   icon: const Icon(Icons.replay_rounded, size: 16),
                   label: const Text('Reorder'),

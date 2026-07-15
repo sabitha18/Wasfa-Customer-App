@@ -51,9 +51,10 @@ class ProductViewModel extends ChangeNotifier {
     }
   }
 
-  /// Matches `openPDP()`'s priority exactly: the pharmacy already in
-  /// context (`lockedToSeller`, i.e. `SHOP.pharma`) first, else the
-  /// cheapest in-stock seller, else just the first seller.
+  /// Initial selection priority: the pharmacy already in context
+  /// (`lockedToSeller`, i.e. `SHOP.pharma`) first, else the cheapest in-stock
+  /// seller, else just the first seller. Once the person taps a different
+  /// pharmacy in the PDP's seller list, [selectSeller] overrides this.
   Seller get selectedSeller {
     if (product.sellers.isEmpty) {
       return const Seller(name: '', price: 0, eta: '', stock: false);
@@ -62,5 +63,24 @@ class ProductViewModel extends ChangeNotifier {
       return product.sellerByName(_selectedSellerName!);
     }
     return product.defaultSeller;
+  }
+
+  /// All sellers for this product, cheapest in-stock first — this is the
+  /// price-comparison list shown on the PDP so the person can choose which
+  /// pharmacy to buy from. The chosen seller's `product_id` is what goes into
+  /// the cart/order.
+  List<Seller> get sellers {
+    final list = List<Seller>.from(product.sellers);
+    list.sort((a, b) {
+      if (a.stock != b.stock) return a.stock ? -1 : 1; // in-stock first
+      return a.price.compareTo(b.price); // then cheapest first
+    });
+    return list;
+  }
+
+  /// Selects which pharmacy the person is buying from.
+  void selectSeller(String name) {
+    _selectedSellerName = name;
+    notifyListeners();
   }
 }

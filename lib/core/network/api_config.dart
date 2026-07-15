@@ -17,7 +17,7 @@ class ApiConfig {
 
   // ---- Home / browsing (anonymous) ----------------------------------------
   static const String home = '/app/home';
-  static const String stores = '/app/stores'; // ⚠ not implemented server-side yet
+  static const String stores = '/app/stores'; // ✅ live — returns { stores: [...] }
   static const String products = '/app/products';
   static String product(String sku) => '/app/product/$sku';
   static const String areas = '/areas';

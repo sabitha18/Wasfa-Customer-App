@@ -22,6 +22,7 @@ class ApiClient {
   static const Map<String, String> _headers = {
     'Accept': 'application/json',
     'Content-Type': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest',
   };
 
   Uri _uri(String path, [Map<String, dynamic>? query]) {
@@ -42,7 +43,7 @@ class ApiClient {
   Future<dynamic> post(String path, {Map<String, dynamic>? body}) {
     final uri = _uri(path);
     return _send(
-      () => http.post(uri, headers: _headers, body: jsonEncode(body ?? const {})),
+          () => http.post(uri, headers: _headers, body: jsonEncode(body ?? const {})),
       method: 'POST',
       uri: uri,
       body: body,

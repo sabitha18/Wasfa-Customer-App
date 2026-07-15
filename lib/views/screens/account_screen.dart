@@ -23,7 +23,7 @@ class AccountScreen extends StatelessWidget {
       [Icons.assignment_return_outlined, 'My requests${orders.pendingRequestCount > 0 ? ' · ${orders.pendingRequestCount}' : ''}', () => Navigator.pushNamed(context, Routes.requests)],
       [Icons.medication_outlined, 'My prescriptions', () => Navigator.pushNamed(context, Routes.myRx)],
       [Icons.account_balance_wallet_outlined, 'Wallet', () => Navigator.pushNamed(context, Routes.wallet)],
-      [Icons.location_on_outlined, 'Addresses', () => Navigator.pushNamed(context, Routes.checkout)],
+      [Icons.location_on_outlined, 'Addresses', () => Navigator.pushNamed(context, Routes.addresses)],
       [Icons.favorite_border_rounded, 'Wishlist', () => Navigator.pushNamed(context, Routes.wishlist)],
       [Icons.credit_card_outlined, 'Payments', () {}],
       [Icons.language_rounded, 'Language · ${locale.isArabic ? "العربية" : "English"}', () => locale.toggle()],

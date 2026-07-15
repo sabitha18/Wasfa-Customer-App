@@ -8,10 +8,12 @@ class OrderItemLine {
   const OrderItemLine({this.productId, this.name = '', required this.qty, required this.price});
 
   factory OrderItemLine.fromJson(Map<String, dynamic> json) => OrderItemLine(
-        productId: asIntOrNull(json, const ['product_id', 'id']),
-        name: asString(json, const ['name']),
-        qty: asInt(json, const ['qty'], fallback: 1),
-        price: asDouble(json, const ['price']),
+        productId: asIntOrNull(json, const ['product_id', 'seller_product_id', 'id']),
+        name: asString(json, const ['name', 'product_name', 'title']),
+        qty: asInt(json, const ['qty', 'quantity', 'qnty'], fallback: 1),
+        // Unit price first; fall back to a line total only if no unit price is
+        // sent (the detail screen multiplies price × qty for the line figure).
+        price: asDouble(json, const ['price', 'unit_price', 'unit', 'line_total', 'total']),
       );
 }
 
@@ -21,8 +23,10 @@ class OrderGroup {
   const OrderGroup({required this.pharmacy, required this.items});
 
   factory OrderGroup.fromJson(Map<String, dynamic> json) => OrderGroup(
-        pharmacy: asString(json, const ['pharmacy', 'seller', 'pharmacy_name']),
-        items: asList(json, const ['items']).map((e) => OrderItemLine.fromJson(e as Map<String, dynamic>)).toList(),
+        pharmacy: asString(json, const ['pharmacy', 'seller', 'pharmacy_name', 'seller_name', 'store', 'store_name']),
+        items: asList(json, const ['items', 'lines', 'products', 'order_items'])
+            .map((e) => OrderItemLine.fromJson(e as Map<String, dynamic>))
+            .toList(),
       );
 }
 
@@ -82,6 +86,24 @@ class Order {
   /// shapes were confirmed, then trim the candidate-key lists below.
   factory Order.fromJson(Map<String, dynamic> json) {
     final raw = asString(json, const ['status']);
+    // Preferred shape: line items already split into per-pharmacy `groups`.
+    var groups = asList(json, const ['groups'])
+        .map((e) => OrderGroup.fromJson(e as Map<String, dynamic>))
+        .toList();
+    // Fallback: some responses (esp. `/acct/order/{code}`) return a single
+    // flat items list at the top level with no grouping — wrap it in one
+    // group so the detail screen still renders every line.
+    if (groups.isEmpty) {
+      final flat = asList(json, const ['items', 'lines', 'products', 'order_items']);
+      if (flat.isNotEmpty) {
+        groups = [
+          OrderGroup(
+            pharmacy: asString(json, const ['pharmacy', 'seller', 'pharmacy_name', 'seller_name', 'store', 'store_name']),
+            items: flat.map((e) => OrderItemLine.fromJson(e as Map<String, dynamic>)).toList(),
+          ),
+        ];
+      }
+    }
     return Order(
       id: asString(json, const ['code', 'id']),
       ts: DateTime.tryParse(asString(json, const ['created_at', 'date', 'ts'])) ?? DateTime.now(),
@@ -89,7 +111,7 @@ class Order {
       pay: asString(json, const ['payment', 'pay'], fallback: 'cod'),
       status: _normalizeStatus(raw),
       rawStatus: raw,
-      groups: asList(json, const ['groups']).map((e) => OrderGroup.fromJson(e as Map<String, dynamic>)).toList(),
+      groups: groups,
       insuranceCover: asDouble(json, const ['insurance_cover']),
     );
   }

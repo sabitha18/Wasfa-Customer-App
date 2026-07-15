@@ -35,7 +35,9 @@ class _StoreBody extends StatelessWidget {
       context,
       MaterialPageRoute(
         builder: (_) => ShopScreen(
-          initialFilter: ShopFilter(pharmacy: store.seller, category: category, brand: brand),
+          // `shopId` (the store's user_id) is what actually scopes the server
+          // listing to this store; `pharmacy` is kept for the header title.
+          initialFilter: ShopFilter(pharmacy: store.seller, shopId: store.id, category: category, brand: brand),
         ),
       ),
     );
@@ -166,78 +168,113 @@ class _StoreBody extends StatelessWidget {
                 ),
               ),
 
-              // .sec "Shop by category" + .catgrid — 4-column grid, not a rail
-              SliverToBoxAdapter(child: SectionHeader(title: 'Shop by category', actionLabel: 'See all', onAction: () => _openShop(context))),
-              SliverToBoxAdapter(
-                child: vm.categoriesInStore.isEmpty
-                    ? const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 16),
-                        child: Text('No results', style: TextStyle(color: AppColors.muted, fontSize: 13)),
-                      )
-                    : GridView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 4, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: .8),
-                        itemCount: vm.categoriesInStore.length,
-                        itemBuilder: (context, i) {
-                          final c = vm.categoriesInStore[i];
-                          return GestureDetector(
-                            onTap: () => _openShop(context, category: c['cat']),
-                            child: Column(
-                              children: [
-                                Expanded(
-                                  child: Container(
-                                    width: double.infinity,
-                                    decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(14)),
-                                    alignment: Alignment.center,
-                                    child: Text(c['emoji']!, style: const TextStyle(fontSize: 30)),
-                                  ),
-                                ),
-                                const SizedBox(height: 7),
-                                Text(c['cat']!, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.ink)),
-                              ],
-                            ),
-                          );
-                        },
+              // All products — this pharmacy's full catalogue (server-scoped by shop id)
+              SliverToBoxAdapter(child: SectionHeader(title: 'All products', actionLabel: 'See all', onAction: () => _openShop(context))),
+              if (vm.isLoading)
+                const SliverToBoxAdapter(
+                  child: Padding(padding: EdgeInsets.symmetric(vertical: 34), child: Center(child: CircularProgressIndicator())),
+                ),
+              if (!vm.isLoading && vm.products.isEmpty)
+                const SliverToBoxAdapter(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Text('No products available from this pharmacy yet.', style: TextStyle(color: AppColors.muted, fontSize: 13)),
+                  ),
+                ),
+              if (!vm.isLoading && vm.products.isNotEmpty)
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  sliver: SliverGrid(
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: .56),
+                    delegate: SliverChildBuilderDelegate(
+                          (context, i) => ProductCard(
+                        product: vm.products[i],
+                        onTap: () => Navigator.pushNamed(context, Routes.product, arguments: vm.products[i].id),
                       ),
-              ),
+                      childCount: vm.products.length,
+                    ),
+                  ),
+                ),
 
-              // .sec "Special offers" + .rail
-              SliverToBoxAdapter(child: SectionHeader(title: 'Special offers', actionLabel: 'See all', onAction: () => _openShop(context))),
-              _ProductRail(products: vm.offers, onTapProduct: (p) => Navigator.pushNamed(context, Routes.product, arguments: p.id)),
+              // .sec "Shop by category" — only when the API data actually has categories
+              if (vm.categoriesInStore.isNotEmpty) ...[
+                SliverToBoxAdapter(child: SectionHeader(title: 'Shop by category', actionLabel: 'See all', onAction: () => _openShop(context))),
+                SliverToBoxAdapter(
+                  child: vm.categoriesInStore.isEmpty
+                      ? const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16),
+                    child: Text('No results', style: TextStyle(color: AppColors.muted, fontSize: 13)),
+                  )
+                      : GridView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 4, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: .8),
+                    itemCount: vm.categoriesInStore.length,
+                    itemBuilder: (context, i) {
+                      final c = vm.categoriesInStore[i];
+                      return GestureDetector(
+                        onTap: () => _openShop(context, category: c['cat']),
+                        child: Column(
+                          children: [
+                            Expanded(
+                              child: Container(
+                                width: double.infinity,
+                                decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(14)),
+                                alignment: Alignment.center,
+                                child: Text(c['emoji']!, style: const TextStyle(fontSize: 30)),
+                              ),
+                            ),
+                            const SizedBox(height: 7),
+                            Text(c['cat']!, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.ink)),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
 
-              // .sec "Best sellers" + .rail
-              SliverToBoxAdapter(child: SectionHeader(title: 'Best sellers', actionLabel: 'See all', onAction: () => _openShop(context))),
-              _ProductRail(products: vm.bestSellers, onTapProduct: (p) => Navigator.pushNamed(context, Routes.product, arguments: p.id)),
+              // .sec "Special offers" + .rail — only when there are offers
+              if (vm.offers.isNotEmpty) ...[
+                SliverToBoxAdapter(child: SectionHeader(title: 'Special offers', actionLabel: 'See all', onAction: () => _openShop(context))),
+                _ProductRail(products: vm.offers, onTapProduct: (p) => Navigator.pushNamed(context, Routes.product, arguments: p.id)),
+              ],
+
+              // .sec "Best sellers" + .rail — only when there are best sellers
+              if (vm.bestSellers.isNotEmpty) ...[
+                SliverToBoxAdapter(child: SectionHeader(title: 'Best sellers', actionLabel: 'See all', onAction: () => _openShop(context))),
+                _ProductRail(products: vm.bestSellers, onTapProduct: (p) => Navigator.pushNamed(context, Routes.product, arguments: p.id)),
+              ],
 
               // .sec "Top brands" + .brand-rail
               SliverToBoxAdapter(child: SectionHeader(title: 'Top brands', actionLabel: 'See all', onAction: () => Navigator.pushNamed(context, Routes.brands, arguments: store))),
               SliverToBoxAdapter(
                 child: vm.brandsInStore.isEmpty
                     ? const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 16),
-                        child: Text('No results', style: TextStyle(color: AppColors.muted, fontSize: 13)),
-                      )
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                  child: Text('No results', style: TextStyle(color: AppColors.muted, fontSize: 13)),
+                )
                     : SizedBox(
-                        height: 62,
-                        child: ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          itemCount: vm.brandsInStore.length,
-                          separatorBuilder: (_, __) => const SizedBox(width: 10),
-                          itemBuilder: (context, i) => GestureDetector(
-                            onTap: () => _openShop(context, brand: vm.brandsInStore[i]),
-                            child: Container(
-                              constraints: const BoxConstraints(minWidth: 92),
-                              padding: const EdgeInsets.symmetric(horizontal: 14),
-                              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(13), boxShadow: AppColors.shSm),
-                              alignment: Alignment.center,
-                              child: Text(vm.brandsInStore[i], maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 13)),
-                            ),
-                          ),
-                        ),
+                  height: 62,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: vm.brandsInStore.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (context, i) => GestureDetector(
+                      onTap: () => _openShop(context, brand: vm.brandsInStore[i]),
+                      child: Container(
+                        constraints: const BoxConstraints(minWidth: 92),
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(13), boxShadow: AppColors.shSm),
+                        alignment: Alignment.center,
+                        child: Text(vm.brandsInStore[i], maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 13)),
                       ),
+                    ),
+                  ),
+                ),
               ),
 
               const SliverToBoxAdapter(child: SizedBox(height: 90)),

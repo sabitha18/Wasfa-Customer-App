@@ -121,7 +121,7 @@ class ProductCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 10, color: AppColors.muted),
                   ),
-                  const SizedBox(height: 5),
+                  const SizedBox(height: 4),
                   // .pr — reserve space for 2 lines (price, then strike-through
                   // price below if it doesn't fit alongside) so wrapping can't
                   // change the card's total height and reintroduce overflow.
@@ -140,7 +140,7 @@ class ProductCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 7),
+                  const SizedBox(height: 5),
                   Builder(builder: (context) {
                     final s = product.defaultSeller;
                     final key = '${product.id}_${s.name}';

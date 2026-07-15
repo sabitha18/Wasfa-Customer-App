@@ -115,9 +115,23 @@ class _ProductBody extends StatelessWidget {
                     for (final b in [p.category, p.concern, p.form].where((b) => b.isNotEmpty)) _BenefitTag(text: b),
                   ]),
                 ),
-                Text('🏪 Sold by ${sel.name}', style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: AppColors.navy)),
+                Text(
+                  vm.sellers.length > 1 ? '🏪 Choose your pharmacy (${vm.sellers.length})' : '🏪 Sold by ${sel.name}',
+                  style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: AppColors.navy),
+                ),
                 const SizedBox(height: 10),
-                _LockedSeller(seller: sel),
+                if (vm.sellers.length > 1)
+                  for (final s in vm.sellers)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _SellerOption(
+                        seller: s,
+                        selected: s.name == sel.name,
+                        onTap: () => vm.selectSeller(s.name),
+                      ),
+                    )
+                else
+                  _LockedSeller(seller: sel),
                 const SizedBox(height: 8),
                 // .acc — bordered accordion box with +/- indicator (not a chevron)
                 _AccordionBox(
@@ -345,6 +359,61 @@ class _LockedSeller extends StatelessWidget {
           ),
           Text(Formatters.money(seller.price), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.navy)),
         ],
+      ),
+    );
+  }
+}
+
+/// A selectable pharmacy row for the PDP price-comparison list. Highlights
+/// the chosen seller (sky border/tint + filled radio) and stays tappable so
+/// the person can compare prices and pick which pharmacy to buy from.
+class _SellerOption extends StatelessWidget {
+  final Seller seller;
+  final bool selected;
+  final VoidCallback onTap;
+  const _SellerOption({required this.seller, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(13),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.skySelectedBg : Colors.white,
+          border: Border.all(color: selected ? AppColors.sky : AppColors.line, width: 1.5),
+          borderRadius: BorderRadius.circular(13),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              selected ? Icons.radio_button_checked_rounded : Icons.radio_button_unchecked_rounded,
+              size: 20,
+              color: selected ? AppColors.sky : AppColors.muted,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(seller.name, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: AppColors.ink)),
+                  const SizedBox(height: 3),
+                  Text('🚚 ${seller.eta}   ${seller.stock ? "🟢 In stock" : "⚪ Out of stock"}', style: const TextStyle(fontSize: 11, color: AppColors.muted)),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(Formatters.money(seller.price), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.navy)),
+                if (seller.was != null)
+                  Text(Formatters.money(seller.was!), style: const TextStyle(fontSize: 11, color: AppColors.muted, decoration: TextDecoration.lineThrough)),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

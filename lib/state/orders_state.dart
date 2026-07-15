@@ -209,29 +209,51 @@ class OrdersState extends ChangeNotifier {
     return result.code;
   }
 
-  void reorderInto(CartState cartState, String orderId) {
+  /// Re-adds a completed order's line items to the shopping cart. Returns how
+  /// many lines were added vs. skipped so the caller can toast honestly (an
+  /// item is skipped when it carries no backend product id and therefore can't
+  /// be ordered again — e.g. it's no longer sold).
+  ({int added, int skipped}) reorderInto(CartState cartState, String orderId) {
     final o = byId(orderId);
-    if (o == null) return;
+    if (o == null) return (added: 0, skipped: 0);
+    var added = 0;
+    var skipped = 0;
     for (final g in o.groups) {
       for (final it in g.items) {
-        if (it.productId == null) continue;
-        final key = '${it.productId}_${g.pharmacy}';
+        // An order line's `product_id` is the *seller* product id — exactly
+        // what checkout must send as `items[].id`. Without it the line can't
+        // be re-ordered, so skip it rather than adding a dead cart entry.
+        final sellerProductId = it.productId;
+        if (sellerProductId == null) {
+          skipped++;
+          continue;
+        }
+        // Best-effort catalog match (for display name/emoji + BOGO math);
+        // null is fine — the name falls back to the order line's own name.
+        final cached = CatalogRepository.instance.findProduct(sellerProductId);
+        final key = '${sellerProductId}_${g.pharmacy}';
         final existing = cartState.cart[key];
         if (existing != null) {
           existing.qty += it.qty;
         } else {
           cartState.cart[key] = CartLine(
             key: key,
-            productId: it.productId,
+            productId: cached?.id,
+            apiProductId: sellerProductId,
             seller: g.pharmacy,
             price: it.price,
             qty: it.qty,
+            nameOverride: it.name.isNotEmpty ? it.name : null,
           );
         }
+        added++;
       }
     }
-    cartState.cartTab = 'my';
-    cartState.notifyListeners();
+    if (added > 0) {
+      cartState.cartTab = 'my';
+      cartState.notifyListeners();
+    }
+    return (added: added, skipped: skipped);
   }
 
   void startRequest(String orderId, String type, {required String reason, String note = ''}) {

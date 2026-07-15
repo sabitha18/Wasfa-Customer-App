@@ -13,6 +13,11 @@ class HomeViewModel extends ChangeNotifier {
   String? error;
   HomeFeed feed = HomeFeed.empty;
 
+  /// Live store marketplace from `GET /app/stores`. Starts empty and stays
+  /// empty until that endpoint is implemented server-side — the Home screen
+  /// falls back to its empty state rather than showing invented stores.
+  List<PharmacyStore> stores = const [];
+
   String storeCategory = 'all';
   final Map<String, bool> storeFilters = {
     'offers': false,
@@ -34,10 +39,18 @@ class HomeViewModel extends ChangeNotifier {
       _repo.cacheProducts([...feed.deals, ...feed.best, ...feed.recent]);
     } catch (e) {
       error = describeError(e);
-    } finally {
-      isLoading = false;
-      notifyListeners();
     }
+    // Stores are fetched separately so a store-list failure (or the endpoint
+    // simply not existing yet) never blanks out the home feed. On any error
+    // we keep the list empty — the screen then shows its empty state instead
+    // of inventing data.
+    try {
+      stores = await _service.stores();
+    } catch (_) {
+      stores = const [];
+    }
+    isLoading = false;
+    notifyListeners();
   }
 
   void toggleFilter(String key) {
@@ -46,19 +59,19 @@ class HomeViewModel extends ChangeNotifier {
   }
 
   /// Matches the HTML's `nearestStoresHTML()`: pharmacy-category stores,
-  /// sorted by the low end of their ETA range, top 4. Still mock — same
-  /// `/app/stores` limitation as [filteredStores].
+  /// sorted by the low end of their ETA range, top 4. Sourced from the live
+  /// [stores] list (empty until `/app/stores` ships server-side).
   List<PharmacyStore> get nearestStores {
     int etaLow(PharmacyStore s) => int.tryParse(s.eta.split('-').first) ?? 99;
-    final list = _repo.stores.where((s) => s.category == 'pharmacy').toList()
+    final list = stores.where((s) => s.category == 'pharmacy').toList()
       ..sort((a, b) => etaLow(a).compareTo(etaLow(b)));
     return list.take(4).toList();
   }
 
-  /// Store marketplace list — still mock; the `/app/stores` endpoint isn't
-  /// implemented server-side yet (see CatalogRepository doc comment).
+  /// Store marketplace list from the live [stores] fetch. Empty until the
+  /// `/app/stores` endpoint is implemented server-side.
   List<PharmacyStore> get filteredStores {
-    var list = List<PharmacyStore>.from(_repo.stores);
+    var list = List<PharmacyStore>.from(stores);
     if (storeCategory != 'all') list = list.where((s) => s.category == storeCategory).toList();
     if (storeFilters['offers'] == true) list = list.where((s) => s.offer != null).toList();
     if (storeFilters['under30'] == true) list = list.where((s) => s.fast).toList();

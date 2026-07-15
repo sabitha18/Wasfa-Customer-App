@@ -134,8 +134,16 @@ class _OrderCard extends StatelessWidget {
               Row(children: [
                 TextButton.icon(
                   onPressed: () {
-                    context.read<OrdersState>().reorderInto(context.read<CartState>(), order.id);
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Added to cart')));
+                    final r = context.read<OrdersState>().reorderInto(context.read<CartState>(), order.id);
+                    final String msg;
+                    if (r.added == 0) {
+                      msg = 'These items are no longer available to reorder.';
+                    } else if (r.skipped > 0) {
+                      msg = 'Added ${r.added} item(s) to cart · ${r.skipped} no longer available';
+                    } else {
+                      msg = 'Added to cart';
+                    }
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
                   },
                   icon: const Icon(Icons.replay_rounded, size: 16),
                   label: const Text('Reorder'),

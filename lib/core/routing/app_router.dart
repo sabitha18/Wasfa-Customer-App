@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../data/models/pharmacy_store.dart';
 import '../../views/screens/account_screen.dart';
+import '../../views/screens/address_list_screen.dart';
 import '../../views/screens/brands_screen.dart';
 import '../../views/screens/cart_screen.dart';
 import '../../views/screens/checkout_screen.dart';
@@ -56,6 +57,8 @@ class AppRouter {
         return _page(const CartScreen());
       case Routes.checkout:
         return _page(const CheckoutScreen());
+      case Routes.addresses:
+        return _page(const AddressListScreen());
       case Routes.track:
         return _page(TrackScreen(orderId: args as String));
       case Routes.myRx:

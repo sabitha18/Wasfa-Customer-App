@@ -126,6 +126,7 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
             InlineErrorBanner(message: addressState.areasError!, onRetry: addressState.loadAreas),
           DropdownButtonFormField<String>(
             initialValue: _titles.contains(_draft.title) ? _draft.title : _titles.first,
+            isExpanded: true,
             decoration: const InputDecoration(labelText: 'Title'),
             items: _titles.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
             onChanged: (v) => setState(() => _draft.title = v ?? _draft.title),
@@ -140,8 +141,9 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
           _field('Phone', _draft.phone, (v) => _draft.phone = v),
           DropdownButtonFormField<int>(
             initialValue: selectedGov?.id,
+            isExpanded: true,
             decoration: const InputDecoration(labelText: 'Governorate'),
-            items: catalog.governorates.map((g) => DropdownMenuItem(value: g.id, child: Text(g.name))).toList(),
+            items: catalog.governorates.map((g) => DropdownMenuItem(value: g.id, child: Text(g.name, overflow: TextOverflow.ellipsis))).toList(),
             onChanged: (v) => setState(() {
               _draft.governorateId = v;
               _draft.areaId = null; // reset dependent area choice
@@ -150,11 +152,12 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
           const SizedBox(height: 12),
           DropdownButtonFormField<int>(
             initialValue: areasForGov.any((a) => a.id == _draft.areaId) ? _draft.areaId : null,
+            isExpanded: true,
             decoration: InputDecoration(
               labelText: 'Area',
               helperText: selectedGov == null ? 'Pick a governorate first' : null,
             ),
-            items: areasForGov.map((a) => DropdownMenuItem(value: a.id, child: Text(a.name))).toList(),
+            items: areasForGov.map((a) => DropdownMenuItem(value: a.id, child: Text(a.name, overflow: TextOverflow.ellipsis))).toList(),
             onChanged: selectedGov == null ? null : (v) => setState(() => _draft.areaId = v),
           ),
           const SizedBox(height: 12),

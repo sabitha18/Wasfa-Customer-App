@@ -22,6 +22,7 @@ class Routes {
   static const account = 'account';
   static const cart = 'cart';
   static const checkout = 'checkout';
+  static const addresses = 'addresses'; // saved-address list (Account → Addresses)
   static const track = 'track';
   static const myRx = 'myrx';
   static const rxDetail = 'rxdetail';

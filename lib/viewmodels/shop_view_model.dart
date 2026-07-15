@@ -12,7 +12,10 @@ class ShopFilter {
   final String? pharmacy;
   final String? category;
   final String? brand;
-  const ShopFilter({this.pharmacy, this.category, this.brand});
+  /// Store id (the shop's `user_id`) to filter the listing to a single store
+  /// via `GET /app/products?shop=<id>`. Null = browse the whole catalogue.
+  final int? shopId;
+  const ShopFilter({this.pharmacy, this.category, this.brand, this.shopId});
 }
 
 class ShopViewModel extends ChangeNotifier {
@@ -24,6 +27,7 @@ class ShopViewModel extends ChangeNotifier {
   List<Product> _fetched = [];
 
   String? pharmacy;
+  int? shopId; // store filter -> GET /app/products?shop=<id>
   String? category;
   String? concern;
   String query = '';
@@ -33,9 +37,26 @@ class ShopViewModel extends ChangeNotifier {
   bool inStock = false;
   bool offersOnly = false;
 
+  /// Maps the UI sort keys (pop/low/high/rated) to the API's expected values
+  /// (pop/plow/phigh). 'rated' has no server equivalent, so it's fetched as
+  /// 'pop' and sorted client-side by rating in [results].
+  String get _apiSort {
+    switch (sort) {
+      case 'low':
+        return 'plow';
+      case 'high':
+        return 'phigh';
+      case 'rated':
+        return 'pop';
+      default:
+        return 'pop';
+    }
+  }
+
   ShopViewModel({ShopFilter? initial}) {
     if (initial != null) {
       pharmacy = initial.pharmacy;
+      shopId = initial.shopId;
       category = initial.category;
       if (initial.brand != null) brands = [initial.brand!];
     }
@@ -57,10 +78,11 @@ class ShopViewModel extends ChangeNotifier {
       final page = await _service.products(
         query: query,
         category: category,
-        sort: sort == 'rated' ? 'pop' : sort,
+        sort: _apiSort, // map UI sort -> API sort (plow/phigh/pop)
         inStock: inStock,
         page: 1,
         perPage: 100,
+        shop: shopId, // when set, the server returns only this store's items
       );
       _fetched = page.items;
       _repo.cacheProducts(_fetched);
@@ -175,7 +197,10 @@ class ShopViewModel extends ChangeNotifier {
 
   List<Product> get results {
     var list = List<Product>.from(_fetched);
-    if (pharmacy != null) list = list.where((p) => p.sellers.any((s) => s.name == pharmacy)).toList();
+    // When a store id is set the server already scoped the page to that shop,
+    // so don't re-filter by seller name (the real seller names on the page
+    // won't match the mock storefront name and would wrongly empty the list).
+    if (pharmacy != null && shopId == null) list = list.where((p) => p.sellers.any((s) => s.name == pharmacy)).toList();
     if (concern != null) list = list.where((p) => p.concern == concern).toList();
     if (brands.isNotEmpty) list = list.where((p) => brands.contains(p.brand)).toList();
     if (offersOnly) list = list.where((p) => p.isOffer).toList();

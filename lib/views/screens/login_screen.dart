@@ -81,8 +81,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _verify() async {
     final code = _codeCtrl.text.trim();
-    if (code.length < 4) {
-      showErrorToast(context, 'Enter the 4-digit code.');
+    if (code.length < 6) {
+      showErrorToast(context, 'Enter the 6-digit code.');
       return;
     }
     final auth = context.read<AuthState>();
@@ -123,7 +123,7 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 8),
               Text(
                 _codeSent
-                    ? 'We sent a 4-digit code to $_fullPhone'
+                    ? 'We sent a 6-digit code to $_fullPhone'
                     : 'Enter your mobile number — we\'ll text you a one-time code.',
                 style: const TextStyle(color: AppColors.muted, fontSize: 13.5, height: 1.4),
               ),
@@ -199,7 +199,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ]),
           ),
-        _field(controller: _codeCtrl, hint: '1234', keyboardType: TextInputType.number, icon: Icons.lock_outline_rounded, maxLength: 4),
+        _field(controller: _codeCtrl, hint: '123456', keyboardType: TextInputType.number, icon: Icons.lock_outline_rounded, maxLength: 6),
         const SizedBox(height: 14),
         _field(controller: _nameCtrl, hint: 'Your name (first time only)', icon: Icons.person_outline_rounded),
         const SizedBox(height: 20),

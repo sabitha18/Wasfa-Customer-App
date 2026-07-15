@@ -126,15 +126,20 @@ class _ShopBody extends StatelessWidget {
               child: vm.isLoading && results.isEmpty
                   ? const LoadingView(message: 'Loading products…')
                   : (vm.error != null && results.isEmpty)
-                      ? ErrorRetryView(message: vm.error!, onRetry: vm.load)
-                      : results.isEmpty
+                  ? ErrorRetryView(message: vm.error!, onRetry: vm.load)
+                  : results.isEmpty
                   ? const Center(child: Text('No results', style: TextStyle(color: AppColors.muted)))
                   : vm.view == 'grid'
               // ── .pgrid ──
                   ? GridView.builder(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                // Lower ratio = taller tiles. The card's content is a stack of
+                // mostly fixed-height sections (110px image + brand + 2-line name
+                // + rating + price + button); at .58 that stack was ~17px taller
+                // than the tile on typical phones, causing "BOTTOM OVERFLOWED BY
+                // 17 PIXELS". .52 gives the extra height a 2-line name needs.
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: .58),
+                    crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: .56),
                 itemCount: results.length,
                 itemBuilder: (context, i) => ProductCard(
                   product: results[i],
@@ -222,66 +227,66 @@ class _ShopBody extends StatelessWidget {
                 Flexible(
                   child: SingleChildScrollView(
                     child: Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    const Text('Pharmacy', style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.muted, fontSize: 12.5)),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8, runSpacing: 8,
-                      children: [
-                        _Chip(
-                          label: 'All stores', small: true, on: vm.pharmacy == null,
-                          onTap: () { vm.setPharmacy(null); setSheetState(() {}); },
+                      padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        const Text('Pharmacy', style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.muted, fontSize: 12.5)),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8, runSpacing: 8,
+                          children: [
+                            _Chip(
+                              label: 'All stores', small: true, on: vm.pharmacy == null,
+                              onTap: () { vm.setPharmacy(null); setSheetState(() {}); },
+                            ),
+                            for (final nm in vm.sellerNames)
+                              _Chip(
+                                label: nm, small: true, on: vm.pharmacy == nm,
+                                onTap: () { vm.setPharmacy(nm); setSheetState(() {}); },
+                              ),
+                          ],
                         ),
-                        for (final nm in vm.sellerNames)
-                          _Chip(
-                            label: nm, small: true, on: vm.pharmacy == nm,
-                            onTap: () { vm.setPharmacy(nm); setSheetState(() {}); },
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    const Text('Brand', style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.muted, fontSize: 12.5)),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8, runSpacing: 8,
-                      children: [
-                        for (final b in vm.realBrands)
-                          _Chip(
-                            label: b, small: true, on: vm.brands.contains(b),
-                            onTap: () { vm.toggleBrand(b); setSheetState(() {}); },
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    const Text('Categories', style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.muted, fontSize: 12.5)),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8, runSpacing: 8,
-                      children: [
-                        _Chip(
-                          label: 'All categories', small: true, on: vm.category == null,
-                          onTap: () { vm.toggleFilterCategory(null); setSheetState(() {}); },
+                        const SizedBox(height: 14),
+                        const Text('Brand', style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.muted, fontSize: 12.5)),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8, runSpacing: 8,
+                          children: [
+                            for (final b in vm.realBrands)
+                              _Chip(
+                                label: b, small: true, on: vm.brands.contains(b),
+                                onTap: () { vm.toggleBrand(b); setSheetState(() {}); },
+                              ),
+                          ],
                         ),
-                        for (final c in CatalogRepository.productCategories.where((c) => c['cat'] != 'Health'))
-                          _Chip(
-                            label: c['cat']!, small: true, on: vm.category == c['cat'],
-                            onTap: () { vm.toggleFilterCategory(c['cat']); setSheetState(() {}); },
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    _FilterRow(
-                      label: '🏷️ Offers only',
-                      value: vm.offersOnly,
-                      onChanged: (_) { vm.toggleOffersOnly(); setSheetState(() {}); },
-                    ),
-                    _FilterRow(
-                      label: 'In stock only',
-                      value: vm.inStock,
-                      onChanged: (_) { vm.toggleInStock(); setSheetState(() {}); },
-                    ),
-                  ]),
+                        const SizedBox(height: 14),
+                        const Text('Categories', style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.muted, fontSize: 12.5)),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8, runSpacing: 8,
+                          children: [
+                            _Chip(
+                              label: 'All categories', small: true, on: vm.category == null,
+                              onTap: () { vm.toggleFilterCategory(null); setSheetState(() {}); },
+                            ),
+                            for (final c in CatalogRepository.productCategories.where((c) => c['cat'] != 'Health'))
+                              _Chip(
+                                label: c['cat']!, small: true, on: vm.category == c['cat'],
+                                onTap: () { vm.toggleFilterCategory(c['cat']); setSheetState(() {}); },
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        _FilterRow(
+                          label: '🏷️ Offers only',
+                          value: vm.offersOnly,
+                          onChanged: (_) { vm.toggleOffersOnly(); setSheetState(() {}); },
+                        ),
+                        _FilterRow(
+                          label: 'In stock only',
+                          value: vm.inStock,
+                          onChanged: (_) { vm.toggleInStock(); setSheetState(() {}); },
+                        ),
+                      ]),
                     ),
                   ),
                 ),
@@ -551,7 +556,7 @@ class _ProductListCard extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           if (qty > 0)
-            // .qstep.sm — compact stepper replaces the plus-only button once in cart.
+          // .qstep.sm — compact stepper replaces the plus-only button once in cart.
             Container(
               padding: const EdgeInsets.all(3),
               decoration: BoxDecoration(color: AppColors.sky, borderRadius: BorderRadius.circular(10)),

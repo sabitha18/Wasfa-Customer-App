@@ -22,6 +22,12 @@ class OrderService {
     String coupon = '',
     required List<Map<String, dynamic>> items,
   }) async {
+    // The server's `payment` enum is strictly cod|knet|wallet. The checkout UI
+    // also offers a "Card" option — Kuwait card payments run through the KNET
+    // gateway, so map it to `knet` here rather than sending an invalid value
+    // that the server rejects. Anything unexpected also falls back to `knet`.
+    const validPayments = {'cod', 'knet', 'wallet'};
+    final normalizedPayment = validPayments.contains(payment) ? payment : 'knet';
     final res = await withFallbackMessage(
       () => _client.post(ApiConfig.orders, body: {
         'user_id': userId,
@@ -36,7 +42,7 @@ class OrderService {
           'flat': address.apt,
           'note': '',
         },
-        'payment': payment,
+        'payment': normalizedPayment,
         'wallet_redeem': walletRedeem,
         'coupon': coupon,
         'items': items,

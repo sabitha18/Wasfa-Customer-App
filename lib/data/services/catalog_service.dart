@@ -4,6 +4,7 @@ import '../../core/network/api_exception.dart';
 import '../models/area_catalog.dart';
 import '../models/coupon_result.dart';
 import '../models/home_feed.dart';
+import '../models/pharmacy_store.dart';
 import '../models/product.dart';
 
 /// Anonymous browsing endpoints — home feed, product listing/detail, areas,
@@ -28,6 +29,7 @@ class CatalogService {
     bool inStock = false,
     int page = 1,
     int perPage = 24,
+    int? shop, // filter to a single store's catalogue (store id = shop user_id)
   }) async {
     final res = await _client.get(ApiConfig.products, query: {
       'q': query,
@@ -35,6 +37,7 @@ class CatalogService {
       'brand': brand,
       'sort': sort,
       if (inStock) 'in_stock': 1,
+      if (shop != null) 'shop': shop,
       'page': page,
       'per_page': perPage,
     });
@@ -46,6 +49,18 @@ class CatalogService {
     return Product.fromJson(res as Map<String, dynamic>);
   }
 
+  /// Store marketplace list (home "Nearest / Browse all stores").
+  ///
+  /// ✅ Confirmed live: `GET /app/stores` returns `{ stores: [...] }`. Kept
+  /// the `data`/`items` fallbacks and try/catch at the call site (see
+  /// [HomeViewModel.load]) in case the shape ever changes or the request
+  /// fails transiently.
+  Future<List<PharmacyStore>> stores() async {
+    final res = await _client.get(ApiConfig.stores);
+    final list = (res is Map ? res['stores'] ?? res['data'] ?? res['items'] : null) ?? (res is List ? res : const []);
+    return (list as List).map((e) => PharmacyStore.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
   Future<AreaCatalog> areas() async {
     final res = await _client.get(ApiConfig.areas);
     return AreaCatalog.fromJson(res as Map<String, dynamic>);
@@ -53,7 +68,7 @@ class CatalogService {
 
   Future<CouponResult> checkCoupon({required String code, required double subtotal}) async {
     final res = await withFallbackMessage(
-      () => _client.get(ApiConfig.coupon, query: {
+          () => _client.get(ApiConfig.coupon, query: {
         'code': code,
         'subtotal': subtotal.toStringAsFixed(3),
       }),
@@ -76,12 +91,12 @@ class ProductPage {
   static const empty = ProductPage(total: 0, page: 1, perPage: 24, pages: 0, items: []);
 
   factory ProductPage.fromJson(Map<String, dynamic> json) => ProductPage(
-        total: (json['total'] as num?)?.toInt() ?? 0,
-        page: (json['page'] as num?)?.toInt() ?? 1,
-        perPage: (json['per_page'] as num?)?.toInt() ?? 24,
-        pages: (json['pages'] as num?)?.toInt() ?? 1,
-        items: ((json['items'] as List?) ?? const [])
-            .map((e) => Product.fromJson(e as Map<String, dynamic>))
-            .toList(),
-      );
+    total: (json['total'] as num?)?.toInt() ?? 0,
+    page: (json['page'] as num?)?.toInt() ?? 1,
+    perPage: (json['per_page'] as num?)?.toInt() ?? 24,
+    pages: (json['pages'] as num?)?.toInt() ?? 1,
+    items: ((json['items'] as List?) ?? const [])
+        .map((e) => Product.fromJson(e as Map<String, dynamic>))
+        .toList(),
+  );
 }

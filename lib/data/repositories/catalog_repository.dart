@@ -192,17 +192,17 @@ class CatalogRepository {
 
   Address defaultAddress() => Address(
         title: 'Home/Apartment',
-        first: 'Nouhad',
-        last: 'Dabliz',
-        email: 'nouhad.dabliz99@gmail.com',
-        phone: '5157 7926',
-        gov: 'Al Asimah',
-        area: 'Salmiya',
-        block: '10',
-        street: 'St 5',
-        building: '2',
-        apt: '3',
-        floor: '1',
+        first: '',
+        last: '',
+        email: '',
+        phone: '',
+        gov: '',
+        area: '',
+        block: '',
+        street: '',
+        building: '',
+        apt: '',
+        floor: '',
       );
 
   Product? findProduct(int id) {
