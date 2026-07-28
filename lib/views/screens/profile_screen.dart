@@ -2,12 +2,27 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/formatters.dart';
 import '../../core/widgets/async_state_view.dart';
 import '../../data/services/auth_service.dart';
 import '../../state/auth_state.dart';
+import '../../state/locale_state.dart';
 import '../widgets/page_header.dart';
 import '../widgets/toast.dart';
 
+/// Matches the HTML's `rProfile()`:
+/// - `.phead` — back + "Profile" title (t('profile_title')) → [PageHeader].
+/// - `.prof-hero` — circular gradient avatar (photo swap isn't wired up;
+///   see the camera-button note below) + name + "age · sex · blood type"
+///   subtitle.
+/// - Three `.prof-card`s — "Personal information", "Health information",
+///   "Emergency contact" — each a bordered white card with a section label
+///   and `.afield`/`.arow` inputs.
+/// - "Reset password" (`.btn-out`) opens the same 3-field bottom sheet as
+///   `openResetPw()`/`doResetPw()` — client-side only in the HTML (no real
+///   backend call), replicated the same way here since there's no password
+///   concept in this app's OTP-based auth to begin with.
+/// - "Save profile" (`.btn-primary`) → `saveProfileForm()`.
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
@@ -16,47 +31,153 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  late final TextEditingController _first;
-  late final TextEditingController _last;
-  final _email = TextEditingController();
+  late final TextEditingController _name;
+  late final TextEditingController _civilId;
+  late final TextEditingController _email;
   late final TextEditingController _phone;
+  late final TextEditingController _nationality;
+  late final TextEditingController _weight;
+  late final TextEditingController _height;
+  late final TextEditingController _emergName;
+  late final TextEditingController _emergRel;
+  late final TextEditingController _emergPhone;
+  DateTime? _dob;
+  String? _gender; // 'Male' | 'Female' | 'Other'
+  String? _bloodType;
   bool _saving = false;
+
+  static const _bloodTypes = ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'];
 
   @override
   void initState() {
     super.initState();
     final user = context.read<AuthState>().user;
-    final parts = (user?.name ?? '').split(' ');
-    _first = TextEditingController(text: parts.isNotEmpty ? parts.first : '');
-    _last = TextEditingController(text: parts.length > 1 ? parts.sublist(1).join(' ') : '');
-    _phone = TextEditingController(text: user?.phone ?? '');
+    // One field, matching what the API actually stores/returns — a
+    // single combined `name`, not separate first/last. Splitting that
+    // into two boxes and re-splitting on every server refresh was lossy
+    // and was silently wiping out whatever was typed as a last name.
+    _name = TextEditingController(text: user?.name ?? '');
+    _civilId = TextEditingController(text: user?.civilId ?? '');
+    _email = TextEditingController(text: user?.email ?? '');
+    _phone = TextEditingController(text: Formatters.localPhone(user?.phone ?? ''));
+    _nationality = TextEditingController(text: user?.nationality ?? '');
+    _weight = TextEditingController(text: user?.weight?.toString() ?? '');
+    _height = TextEditingController(text: user?.height?.toString() ?? '');
+    _emergName = TextEditingController(text: user?.emergName ?? '');
+    _emergRel = TextEditingController(text: user?.emergRel ?? '');
+    _emergPhone = TextEditingController(text: user?.emergPhone ?? '');
+    _dob = user?.dob != null ? DateTime.tryParse(user!.dob!) : null;
+    _gender = user?.gender;
+    _bloodType = user?.bloodType;
+    // The form is instantly populated from whatever's cached locally above;
+    // this then fetches the real, current profile from the server (now
+    // confirmed live) and refreshes everything once it lands, so the
+    // screen doesn't just show stale on-device data indefinitely.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadFromServer());
+  }
+
+  Future<void> _loadFromServer() async {
+    final auth = context.read<AuthState>();
+    if (!auth.isSignedIn) return;
+    try {
+      final fresh = await AuthService.instance.fetchProfile(auth.userId!);
+      if (!mounted) return;
+      await auth.refreshUser(fresh);
+      if (!mounted) return;
+      setState(() {
+        if (fresh.name.isNotEmpty) _name.text = fresh.name;
+        if (fresh.civilId != null) _civilId.text = fresh.civilId!;
+        if (fresh.email != null) _email.text = fresh.email!;
+        if (fresh.phone.isNotEmpty) _phone.text = Formatters.localPhone(fresh.phone);
+        if (fresh.nationality != null) _nationality.text = fresh.nationality!;
+        if (fresh.weight != null) _weight.text = fresh.weight!.toString();
+        if (fresh.height != null) _height.text = fresh.height!.toString();
+        if (fresh.emergName != null) _emergName.text = fresh.emergName!;
+        if (fresh.emergRel != null) _emergRel.text = fresh.emergRel!;
+        if (fresh.emergPhone != null) _emergPhone.text = fresh.emergPhone!;
+        if (fresh.dob != null) _dob = DateTime.tryParse(fresh.dob!) ?? _dob;
+        if (fresh.gender != null) _gender = fresh.gender;
+        if (fresh.bloodType != null) _bloodType = fresh.bloodType;
+      });
+    } catch (_) {
+      // Best-effort — keep showing whatever was already cached locally.
+    }
   }
 
   @override
   void dispose() {
-    _first.dispose();
-    _last.dispose();
+    _name.dispose();
+    _civilId.dispose();
     _email.dispose();
     _phone.dispose();
+    _nationality.dispose();
+    _weight.dispose();
+    _height.dispose();
+    _emergName.dispose();
+    _emergRel.dispose();
+    _emergPhone.dispose();
     super.dispose();
+  }
+
+  int? get _age {
+    if (_dob == null) return null;
+    final now = DateTime.now();
+    var age = now.year - _dob!.year;
+    if (now.month < _dob!.month || (now.month == _dob!.month && now.day < _dob!.day)) age--;
+    return age;
+  }
+
+  String _profInitial() {
+    final auth = context.read<AuthState>().user;
+    final n = auth?.name.trim() ?? '';
+    return n.isNotEmpty ? n[0].toUpperCase() : '?';
+  }
+
+  Future<void> _pickDob() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _dob ?? DateTime(now.year - 25),
+      firstDate: DateTime(now.year - 110),
+      lastDate: now,
+    );
+    if (picked != null) setState(() => _dob = picked);
   }
 
   Future<void> _save() async {
     final auth = context.read<AuthState>();
     if (!auth.isSignedIn) return;
-    if (_first.text.trim().isEmpty) {
-      showErrorToast(context, 'Please enter your first name.');
+    if (_name.text.trim().isEmpty) {
+      showErrorToast(context, 'Please enter your name.');
       return;
     }
+    // The save API still wants first_name/last_name as two separate keys
+    // (confirmed in the Postman collection) — split only here, right at
+    // the point of sending, so the UI itself stays a single field.
+    final nameParts = _name.text.trim().split(RegExp(r'\s+'));
+    final firstName = nameParts.first;
+    final lastName = nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '';
     setState(() => _saving = true);
     try {
-      await AuthService.instance.saveProfile(
+      final updated = await AuthService.instance.saveProfile(
         userId: auth.userId!,
-        firstName: _first.text.trim(),
-        lastName: _last.text.trim(),
+        firstName: firstName,
+        lastName: lastName,
         email: _email.text.trim().isEmpty ? null : _email.text.trim(),
-        phone: _phone.text.trim().isEmpty ? null : _phone.text.trim(),
+        phone: _phone.text.trim().isEmpty ? null : '+965${Formatters.localPhone(_phone.text.trim())}',
+        civilId: _civilId.text.trim().isEmpty ? null : _civilId.text.trim(),
+        dateOfBirth: _dob != null ? _dob!.toIso8601String().split('T').first : null,
+        gender: _gender,
+        nationality: _nationality.text.trim().isEmpty ? null : _nationality.text.trim(),
+        weight: double.tryParse(_weight.text.trim()),
+        height: double.tryParse(_height.text.trim()),
+        bloodType: _bloodType,
+        emergName: _emergName.text.trim().isEmpty ? null : _emergName.text.trim(),
+        emergRel: _emergRel.text.trim().isEmpty ? null : _emergRel.text.trim(),
+        emergPhone: _emergPhone.text.trim().isEmpty ? null : _emergPhone.text.trim(),
       );
+      if (!mounted) return;
+      await auth.refreshUser(updated);
       if (!mounted) return;
       showToast(context, 'Profile saved');
       Navigator.pop(context);
@@ -68,33 +189,316 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  Widget _field(String label, TextEditingController c, {TextInputType? type}) => Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: TextField(
-          controller: c,
-          keyboardType: type,
-          decoration: InputDecoration(labelText: label),
+  void _openResetPw() {
+    final current = TextEditingController();
+    final newPw = TextEditingController();
+    final confirm = TextEditingController();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      builder: (sheetContext) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(sheetContext).viewInsets.bottom),
+        child: SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
+              decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.line, width: 1))),
+              child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                const Text('Reset password', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 17, color: AppColors.navy)),
+                InkWell(
+                  onTap: () => Navigator.pop(sheetContext),
+                  borderRadius: BorderRadius.circular(9),
+                  child: Container(
+                    width: 32, height: 32,
+                    decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(9)),
+                    alignment: Alignment.center,
+                    child: const Icon(Icons.close_rounded, size: 18, color: AppColors.navy),
+                  ),
+                ),
+              ]),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 6),
+              child: Column(children: [
+                _afield('Current password', current, obscure: true),
+                _afield('New password', newPw, obscure: true),
+                _afield('Confirm new password', confirm, obscure: true),
+              ]),
+            ),
+            Container(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+              decoration: const BoxDecoration(border: Border(top: BorderSide(color: AppColors.line, width: 1))),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.navy, foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+                  ),
+                  // Client-side only, same as the HTML's doResetPw() — this
+                  // app's auth is OTP-based with no password on the backend,
+                  // so there's nothing to actually change here yet.
+                  onPressed: () {
+                    if (newPw.text.length < 6) {
+                      showErrorToast(sheetContext, 'Password too short');
+                      return;
+                    }
+                    if (newPw.text != confirm.text) {
+                      showErrorToast(sheetContext, "Passwords don't match");
+                      return;
+                    }
+                    Navigator.pop(sheetContext);
+                    showToast(context, 'Password changed');
+                  },
+                  child: const Text('Save', style: TextStyle(fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ),
+          ]),
         ),
+      ),
+    );
+  }
+
+  // .afield
+  Widget _afield(String label, TextEditingController c, {TextInputType? type, bool obscure = false, bool readOnly = false, int? maxLength}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 11),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.navy)),
+          const SizedBox(height: 5),
+          TextField(
+            controller: c,
+            keyboardType: type,
+            obscureText: obscure,
+            readOnly: readOnly,
+            maxLength: maxLength,
+            textAlign: readOnly ? TextAlign.center : TextAlign.start,
+            style: TextStyle(fontSize: 13.5, color: readOnly ? AppColors.muted : AppColors.ink),
+            decoration: InputDecoration(
+              counterText: '',
+              filled: readOnly,
+              fillColor: readOnly ? AppColors.bg : null,
+              // Readonly fields here are only ever the short "+965" prefix box —
+              // the default 11px all-around padding left barely any room for
+              // the text at a fixed 58px width and was clipping the last digit.
+              contentPadding: readOnly ? const EdgeInsets.symmetric(horizontal: 4, vertical: 11) : const EdgeInsets.all(11),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.line, width: 1.5)),
+              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.line, width: 1.5)),
+              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.sky, width: 1.5)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // .afield for a tap-to-pick field (date / dropdown) rendered as a bordered box
+  Widget _apick(String label, String display, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 11),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.navy)),
+          const SizedBox(height: 5),
+          InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(11),
+              decoration: BoxDecoration(border: Border.all(color: AppColors.line, width: 1.5), borderRadius: BorderRadius.circular(10)),
+              child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                Text(display, style: const TextStyle(fontSize: 13.5, color: AppColors.ink)),
+                const Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: AppColors.muted),
+              ]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _pickOption(String title, List<String> options, String? current, ValueChanged<String> onPicked) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      builder: (sheetContext) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Padding(padding: const EdgeInsets.all(16), child: Text(title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.navy))),
+          for (final o in options)
+            ListTile(
+              title: Text(o),
+              trailing: current == o ? const Icon(Icons.check_rounded, color: AppColors.sky) : null,
+              onTap: () {
+                onPicked(o);
+                Navigator.pop(sheetContext);
+              },
+            ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+  }
+
+  // .arow with the phone prefix fixed at 58px (HTML: flex:0 0 58px) instead
+  // of an equal split, so the actual number field gets the rest of the row.
+  Widget _phoneRow(TextEditingController phone) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(width: 64, child: _afield('Phone', TextEditingController(text: '+965'), readOnly: true)),
+        const SizedBox(width: 10),
+        Expanded(child: _afield('\u00A0', phone, type: TextInputType.phone)),
+      ],
+    );
+  }
+
+  // .arow
+  Widget _arow(List<Widget> children) => IntrinsicHeight(
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [for (var i = 0; i < children.length; i++) ...[if (i > 0) const SizedBox(width: 10), Expanded(child: children[i])]]),
+      );
+
+  // .prof-card
+  Widget _profCard(String title, List<Widget> children) => Container(
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
+        decoration: BoxDecoration(color: Colors.white, border: Border.all(color: AppColors.line, width: 1), borderRadius: BorderRadius.circular(16), boxShadow: AppColors.shSm),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.navy)),
+          const SizedBox(height: 12),
+          ...children,
+        ]),
       );
 
   @override
   Widget build(BuildContext context) {
+    final isArabic = context.watch<LocaleState>().isArabic;
+    final genderLabel = _gender == 'Male'
+        ? (isArabic ? 'ذكر' : 'Male')
+        : _gender == 'Female'
+            ? (isArabic ? 'أنثى' : 'Female')
+            : _gender == 'Other'
+                ? (isArabic ? 'أخرى' : 'Other')
+                : null;
+    final subtitleParts = <String>[
+      if (_age != null) '$_age ${isArabic ? "سنة" : "yrs"}',
+      if (genderLabel != null) genderLabel,
+      if (_bloodType != null) _bloodType!,
+    ];
+
     return Scaffold(
+      backgroundColor: AppColors.bg,
       appBar: PageHeader(title: 'Profile'),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.only(bottom: 30),
         children: [
-          _field('First name', _first),
-          _field('Last name', _last),
-          _field('Email', _email, type: TextInputType.emailAddress),
-          _field('Phone', _phone, type: TextInputType.phone),
-          const SizedBox(height: 8),
-          ElevatedButton(
-            onPressed: _saving ? null : _save,
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.navy, foregroundColor: Colors.white, minimumSize: const Size(double.infinity, 48)),
-            child: _saving
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white))
-                : const Text('Save changes', style: TextStyle(fontWeight: FontWeight.w700)),
+          // .prof-hero
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(16, 22, 16, 8),
+            color: Colors.white,
+            child: Column(children: [
+              Stack(clipBehavior: Clip.none, children: [
+                Container(
+                  width: 92, height: 92,
+                  decoration: BoxDecoration(gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [AppColors.sky, AppColors.navy]), shape: BoxShape.circle, boxShadow: AppColors.sh),
+                  alignment: Alignment.center,
+                  child: Text(_profInitial(), style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.w700)),
+                ),
+                Positioned(
+                  bottom: -2, right: -2,
+                  child: InkWell(
+                    onTap: () => showToast(context, "Photo upload isn't available yet"),
+                    borderRadius: BorderRadius.circular(15),
+                    child: Container(
+                      width: 30, height: 30,
+                      decoration: BoxDecoration(color: AppColors.rose, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 3)),
+                      alignment: Alignment.center,
+                      child: const Icon(Icons.camera_alt_rounded, size: 14, color: Colors.white),
+                    ),
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 12),
+              Text(
+                _name.text.trim().isEmpty ? 'WASFA customer' : _name.text,
+                style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700, color: AppColors.navy),
+              ),
+              if (subtitleParts.isNotEmpty) ...[
+                const SizedBox(height: 3),
+                Text(subtitleParts.join(' · '), style: const TextStyle(fontSize: 12.5, color: AppColors.muted)),
+              ],
+              const SizedBox(height: 8),
+            ]),
+          ),
+
+          const SizedBox(height: 12),
+
+          // Personal information
+          _profCard('Personal information', [
+            _afield('Name', _name),
+            _afield('Civil ID', _civilId, type: TextInputType.number, maxLength: 12),
+            _afield('Email', _email, type: TextInputType.emailAddress),
+            _phoneRow(_phone),
+            _arow([
+              _apick('Date of birth', _dob != null ? '${_dob!.year}-${_dob!.month.toString().padLeft(2, '0')}-${_dob!.day.toString().padLeft(2, '0')}' : 'Not set', _pickDob),
+              _apick('Sex', genderLabel ?? 'Not set', () => _pickOption('Sex', ['Female', 'Male', 'Other'], _gender, (v) => setState(() => _gender = v))),
+            ]),
+            _afield('Nationality', _nationality),
+          ]),
+
+          // Health information
+          _profCard('Health information', [
+            _arow([_afield('Weight (kg)', _weight, type: TextInputType.number), _afield('Height (cm)', _height, type: TextInputType.number)]),
+            _apick('Blood type', _bloodType ?? 'Not set', () => _pickOption('Blood type', _bloodTypes, _bloodType, (v) => setState(() => _bloodType = v))),
+            const SizedBox(height: 2),
+          ]),
+
+          // Emergency contact
+          _profCard('Emergency contact', [
+            _arow([_afield('Contact name', _emergName), _afield('Relationship', _emergRel)]),
+            _phoneRow(_emergPhone),
+          ]),
+
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+            child: OutlinedButton(
+              onPressed: _openResetPw,
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: AppColors.navy, width: 1.5),
+                foregroundColor: AppColors.navy,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+              ),
+              child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon(Icons.lock_outline_rounded, size: 17),
+                SizedBox(width: 8),
+                Text('Reset password', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+              ]),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: ElevatedButton(
+              onPressed: _saving ? null : _save,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.navy, foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+                minimumSize: const Size(double.infinity, 0),
+              ),
+              child: _saving
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white))
+                  : const Text('Save profile', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+            ),
           ),
         ],
       ),

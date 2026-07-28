@@ -22,7 +22,7 @@ class ProductCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final cart = context.watch<CartState>();
     final locale = context.watch<LocaleState>();
-    final wished = cart.isWished(product.id);
+    final wished = cart.isWishedOrFallback(product.id, product.wishlistStatus);
     final price = product.bestPrice;
     final was = product.bestWasPrice;
 
@@ -121,6 +121,36 @@ class ProductCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 10, color: AppColors.muted),
                   ),
+                  const SizedBox(height: 3),
+                  Builder(builder: (context) {
+                    final s = product.defaultSeller;
+                    // The PLP response has no seller/pharmacy-name field at
+                    // all for single-seller items — Product.fromJson's
+                    // synthesized seller falls back to the literal string
+                    // 'WASFA' when none is given. Showing that as if it
+                    // were a real pharmacy name would be fabricated info,
+                    // so this line only renders when there's something
+                    // genuine to show.
+                    //
+                    // Always shows the actual pharmacy name (the same one
+                    // the PDP would show as "Sold by X" — see
+                    // ProductViewModel/Product.defaultSeller's "locked
+                    // seller" rule), even when there's more than one seller
+                    // for this product. This used to show "N pharmacies"
+                    // (a bare count) instead whenever sellerCount > 1,
+                    // which contradicted that same rule: the PDP never
+                    // shows a picker or a count, just the one pharmacy
+                    // that's actually been selected — the card shouldn't
+                    // either.
+                    final label = s.name != 'WASFA' ? '🏪 ${s.name}' : null;
+                    if (label == null) return const SizedBox(height: 10);
+                    return Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 10, color: AppColors.muted),
+                    );
+                  }),
                   const SizedBox(height: 4),
                   // .pr — reserve space for 2 lines (price, then strike-through
                   // price below if it doesn't fit alongside) so wrapping can't
@@ -144,6 +174,12 @@ class ProductCard extends StatelessWidget {
                   Builder(builder: (context) {
                     final s = product.defaultSeller;
                     final key = '${product.id}_${s.name}';
+                    // Deferred to after this frame — seeding (if it does
+                    // anything at all) calls notifyListeners, which
+                    // shouldn't happen synchronously mid-build.
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      cart.seedCartStatusOnce(product, seller: s.name, price: s.price, was: s.was, apiProductId: s.productId, cartStatus: product.cartStatus);
+                    });
                     final qty = cart.cart[key]?.qty ?? 0;
                     final outOfStock = !s.stock;
                     if (qty > 0) {
@@ -157,13 +193,13 @@ class ProductCard extends StatelessWidget {
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            StepBtn(icon: Icons.remove_rounded, onTap: () => cart.setQty(key, -1)),
+                            StepBtn(icon: Icons.remove_rounded, onTap: () => cart.setQtyRemote(context, key, -1)),
                             Text('$qty', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
                             StepBtn(
                               icon: Icons.add_rounded,
                               onTap: outOfStock
                                   ? null
-                                  : () => cart.addToCart(product, seller: s.name, price: s.price, was: s.was, apiProductId: s.productId),
+                                  : () => cart.addToCartRemote(context, product, seller: s.name, price: s.price, was: s.was, apiProductId: s.productId),
                             ),
                           ],
                         ),
@@ -190,7 +226,7 @@ class ProductCard extends StatelessWidget {
                       width: double.infinity,
                       child: ElevatedButton(
                         onPressed: () {
-                          cart.addToCart(product, seller: s.name, price: s.price, was: s.was, apiProductId: s.productId);
+                          cart.addToCartRemote(context, product, seller: s.name, price: s.price, was: s.was, apiProductId: s.productId);
                           showToast(context, locale.isArabic ? 'أُضيف للسلة' : 'Added to cart');
                         },
                         style: ElevatedButton.styleFrom(

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../state/address_state.dart';
+import '../../state/auth_state.dart';
 import '../../state/cart_state.dart';
 import 'account_screen.dart';
 import 'home_screen.dart';
@@ -24,12 +26,28 @@ class _RootShellState extends State<RootShell> {
   @override
   Widget build(BuildContext context) {
     final cart = context.watch<CartState>();
+    final auth = context.watch<AuthState>();
+
+    // Ensures the "Delivery addresses" picker (openable from the app bar
+    // on Home/Store/Wishlist, not just Account/Checkout) has something to
+    // actually show the first time someone taps it, rather than depending
+    // on them having visited Account or Checkout first this session — see
+    // AddressState.ensureAddressesLoaded's doc. Covers both being signed
+    // in already when this shell first mounts, and signing in later
+    // (ensureAddressesLoaded's own guard makes repeated calls harmless, so
+    // it's safe to just call this on every rebuild rather than needing
+    // separate mount-time/later-login handling).
+    if (auth.isSignedIn) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        context.read<AddressState>().ensureAddressesLoaded(auth.userId!);
+      });
+    }
 
     final pages = [
       Scaffold(appBar: const AppTopBar(), body: const HomeScreen()),
       const ShopScreen(),
-      Scaffold(appBar: AppBar(title: const Text('Wishlist')), body: const WishlistScreen()),
-      Scaffold(appBar: AppBar(title: const Text('Account')), body: const AccountScreen()),
+      Scaffold(appBar: const AppTopBar(), body: const WishlistScreen()),
+      Scaffold(appBar: const AppTopBar(), body: const AccountScreen()),
     ];
 
     return Scaffold(

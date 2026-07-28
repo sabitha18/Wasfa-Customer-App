@@ -9,6 +9,7 @@ class ProductViewModel extends ChangeNotifier {
   final CatalogRepository _repo = CatalogRepository.instance;
   final CatalogService _service = CatalogService.instance;
   final int productId;
+  final int? userId; // so wishlist_status/cart_status in the response reflect this person, not a default
   /// Always true — matches the HTML's `openPDP()`, the only place that ever
   /// sets `PDP.locked`, and it always sets it to `true`. There is no code
   /// path in the source that ever shows a multi-seller "choose pharmacy"
@@ -24,7 +25,7 @@ class ProductViewModel extends ChangeNotifier {
   String? error;
   late Product product;
 
-  ProductViewModel({required this.productId, String? lockedToSeller}) {
+  ProductViewModel({required this.productId, String? lockedToSeller, this.userId}) {
     _selectedSellerName = lockedToSeller;
     // Show whatever's cached immediately (from the Shop/Home rail the person
     // tapped), then refresh from the PDP endpoint for the full seller
@@ -35,12 +36,12 @@ class ProductViewModel extends ChangeNotifier {
   }
 
   Future<void> load() async {
-    final sku = product.sku.isNotEmpty ? product.sku : productId.toString();
+    final identifier = product.pdpIdentifier;
     isLoading = product.sellers.isEmpty; // only block the UI if we have nothing to show yet
     error = null;
     notifyListeners();
     try {
-      final fresh = await _service.product(sku);
+      final fresh = await _service.product(identifier, userId: userId);
       product = fresh;
       _repo.cacheProducts([fresh]);
     } catch (e) {

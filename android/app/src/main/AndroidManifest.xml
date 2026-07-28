@@ -2,10 +2,34 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Required on Android 13 (API 33)+ — without this, the OS silently
+         blocks ALL notifications regardless of whether FCM successfully
+         delivers the message to the device. FirebaseMessaging.instance
+         .requestPermission() (called in NotificationService.initialize())
+         can't actually trigger the real system permission prompt without
+         this manifest entry present. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="wasfa_app"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- Google Maps needs this key at runtime. Replace YOUR_ANDROID_MAPS_API_KEY
+             with a key from Google Cloud Console (APIs & Services > Credentials),
+             with the "Maps SDK for Android" API enabled for it. -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="AIzaSyCSjYdB26Vz43Oca337B6TQF6DrXIwMKAU"/>
+        <!-- Makes background/terminated-state notifications (the ones the
+             OS shows automatically via FCM, without any of our own
+             onMessage code running) use the SAME channel
+             NotificationService already creates for foreground pushes,
+             instead of falling back to a generic default channel. Value
+             must match NotificationService's `_channel.id`
+             ('wasfa_default') exactly. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="wasfa_default"/>
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -20,9 +44,9 @@
                  while the Flutter UI initializes. After that, this theme continues
                  to determine the Window background behind the Flutter UI. -->
             <meta-data
-              android:name="io.flutter.embedding.android.NormalTheme"
-              android:resource="@style/NormalTheme"
-              />
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme"
+                />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>

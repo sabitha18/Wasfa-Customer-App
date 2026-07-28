@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/routing/app_routes.dart';
 import '../../core/theme/app_colors.dart';
+import '../../data/services/notification_history_store.dart';
+import '../../state/address_state.dart';
 import '../../state/cart_state.dart';
 import '../../state/location_state.dart';
+import 'address_sheets.dart';
 
 /// Matches `.appbar` — top location row (`.ab-top`/`.ab-loc`/`.ab-act`) plus
 /// the `.search` bar underneath, in a single `PreferredSize` widget so it
@@ -16,8 +19,22 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
   Widget build(BuildContext context) {
     final cart = context.watch<CartState>();
     final location = context.watch<LocationState>();
-    final areaLabel = location.area?.isNotEmpty == true ? location.area! : 'Current location';
-    final detailLabel = [location.street, location.governorate].where((s) => s != null && s!.isNotEmpty).join(' · ');
+    final addressState = context.watch<AddressState>();
+    final notifications = context.watch<NotificationHistoryStore>();
+
+    // "Deliver to ..." follows the device's GPS location by default; once
+    // the person explicitly picks a saved address from the picker sheet,
+    // it switches to showing that address instead (see AddressState.select
+    // / .selectCurrentLocation).
+    final usingSavedAddress = !addressState.isCurrentLocationActive && addressState.selected != null;
+    final areaLabel = usingSavedAddress
+        ? addressState.selected!.title
+        : (location.area?.isNotEmpty == true ? location.area! : 'Current location');
+    final detailLabel = usingSavedAddress
+        ? addressState.selected!.formatted
+        : [location.street, location.governorate].where((s) => s != null && s!.isNotEmpty).join(' · ');
+
+    void openPicker() => showAddressPickerSheet(context, addressState, location);
 
     return AppBar(
       backgroundColor: AppColors.white,
@@ -31,7 +48,7 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
           Row(
             children: [
               GestureDetector(
-                onTap: () => context.read<LocationState>().retry(),
+                onTap: openPicker,
                 child: Row(children: [
                   // .ab-loc .pin
                   Container(
@@ -44,10 +61,10 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
                   const SizedBox(width: 8),
                 ]),
               ),
-              // .ab-loc .tx — real current location, from LocationState
+              // .ab-loc .tx — current selection: GPS area, or a picked saved address
               Expanded(
                 child: GestureDetector(
-                  onTap: () => context.read<LocationState>().retry(),
+                  onTap: openPicker,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -58,7 +75,7 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
                         children: [
                           Flexible(
                             child: Text(
-                              detailLabel.isNotEmpty ? detailLabel : 'Tap to refresh location',
+                              detailLabel.isNotEmpty ? detailLabel : 'Tap to choose your delivery address',
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(fontSize: 11, color: AppColors.muted),
                             ),
@@ -71,6 +88,12 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
                 ),
               ),
               // .ab-act
+              IconBtn(
+                icon: Icons.notifications_none_rounded,
+                badge: notifications.unreadCount > 0 ? notifications.unreadCount : null,
+                onTap: () => Navigator.pushNamed(context, Routes.notifications),
+              ),
+              const SizedBox(width: 7),
               IconBtn(icon: Icons.medication_outlined, onTap: () => Navigator.pushNamed(context, Routes.myRx)),
               const SizedBox(width: 7),
               IconBtn(

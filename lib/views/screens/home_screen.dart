@@ -2,9 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/routing/app_routes.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/address_geocoder.dart';
 import '../../core/widgets/async_state_view.dart';
+import '../../data/models/home_feed.dart';
 import '../../data/models/pharmacy_store.dart';
+import '../../state/address_state.dart';
+import '../../state/location_state.dart';
 import '../../viewmodels/home_view_model.dart';
+import '../../viewmodels/shop_view_model.dart';
 import '../widgets/section_header.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -12,8 +17,21 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Location is a hard gate before this screen can ever build (see
+    // LocationGateScreen) — position should already be available here.
+    final location = context.read<LocationState>();
+    final addressState = context.read<AddressState>();
+    // Only the "Current location" case can be resolved synchronously here
+    // (GPS position is already available) — a saved address needs
+    // forward-geocoding, which is async and can't be awaited inside
+    // build(). That case starts with no coordinates and gets corrected a
+    // moment later by _HomeBody's own reactive refresh below, same as the
+    // "GPS still resolving" race this already had to handle anyway.
+    final initial = addressState.isCurrentLocationActive
+        ? (lat: location.position?.latitude, lng: location.position?.longitude)
+        : (lat: null, lng: null);
     return ChangeNotifierProvider(
-      create: (_) => HomeViewModel(),
+      create: (_) => HomeViewModel(lat: initial.lat, lng: initial.lng),
       child: const _HomeBody(),
     );
   }
@@ -25,71 +43,72 @@ class _HomeBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final vm = context.watch<HomeViewModel>();
+    final location = context.watch<LocationState>();
+    final addressState = context.watch<AddressState>();
+
+    // Keeps the "Nearest stores" list honest about wherever delivery is
+    // ACTUALLY going right now — reactively — not just whatever was true
+    // the one time this ViewModel was first constructed. Always resolves
+    // to lat/lng, never governorate_id/area_id — a saved address has no
+    // coordinates of its own, so its area/governorate NAME gets
+    // forward-geocoded into approximate coordinates instead (see
+    // AddressGeocoder) rather than sending the area/governorate ids
+    // themselves. Covers: GPS still resolving when Home first mounted (a
+    // timing race, not a permanent failure), the position genuinely
+    // changing later, AND switching which saved address is selected in
+    // the delivery-address picker (the app bar's "Deliver to" label
+    // already updates for this — the store list underneath used to
+    // silently NOT follow it at all). refreshStoresIfLocationChanged
+    // no-ops internally if the resolved coordinates haven't actually
+    // changed, so this is safe to kick off on every rebuild.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      double? lat;
+      double? lng;
+      if (addressState.isCurrentLocationActive) {
+        lat = location.position?.latitude;
+        lng = location.position?.longitude;
+      } else {
+        final a = addressState.effectiveAddress;
+        if (a != null) {
+          final geocoded = await AddressGeocoder.instance.forAddress(a);
+          lat = geocoded.lat;
+          lng = geocoded.lng;
+        }
+      }
+      vm.refreshStoresIfLocationChanged(lat, lng);
+    });
+
+    // Was rendering the full layout with every section already empty
+    // (no categories, no banners, no product rails, no stores) while
+    // GET /app/home and GET /app/stores were still in flight — looked
+    // exactly like "nothing is happening" rather than "loading", since
+    // there was no spinner or skeleton anywhere. Only applies to the very
+    // first load (feed still the initial empty constant AND stores still
+    // empty) — a background refresh with existing data already on screen
+    // shouldn't wipe it all out again just to show a spinner.
+    if (vm.isLoading && identical(vm.feed, HomeFeed.empty) && vm.stores.isEmpty) {
+      return const LoadingView(message: 'Loading…');
+    }
 
     return CustomScrollView(
       slivers: [
         // The home feed (deals/best/recent rails, categories, brands) comes
         // from GET /app/home — it's fetched on load to warm the product
-        // cache for other screens. The store marketplace below stays mock
-        // (GET /app/stores isn't implemented server-side yet), so a feed
-        // fetch failure is shown as a small non-blocking banner rather than
-        // hiding the page.
+        // cache for other screens. The store marketplace below is a
+        // separate fetch (GET /app/stores, confirmed live — see
+        // HomeViewModel.stores), so a feed fetch failure is shown as a
+        // small non-blocking banner rather than hiding the page.
         if (vm.error != null)
           SliverToBoxAdapter(
             child: InlineErrorBanner(message: vm.error!, onRetry: vm.load),
           ),
 
-        // ---- .carousel — promo cards -----------------------------------------
-        SliverToBoxAdapter(
-          child: SizedBox(
-            height: 188,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-              children: [
-                PromoCard(
-                  gradient: AppColors.promo1,
-                  title: 'Pharmacy & doctor,\nin one app',
-                  subtitle: 'Genuine meds in 1 hour + doctors on demand',
-                  cta: 'Explore',
-                  onTap: () => Navigator.pushNamed(context, Routes.shop),
-                ),
-                const SizedBox(width: 12),
-                PromoCard(
-                  gradient: AppColors.promo2,
-                  title: 'Free delivery in 1 hour',
-                  subtitle: 'On orders of 3 items or more',
-                  cta: 'Shop now',
-                  onTap: () => Navigator.pushNamed(context, Routes.shop),
-                ),
-                const SizedBox(width: 12),
-                PromoCard(
-                  gradient: AppColors.promo3,
-                  title: 'Your prescriptions,\ndelivered',
-                  subtitle: 'Doctor sends your Rx straight to the app',
-                  cta: 'My Rx',
-                  onTap: () => Navigator.pushNamed(context, Routes.myRx),
-                ),
-              ],
-            ),
-          ),
-        ),
-        // ---- .dots — carousel page indicator ---------------------------------
-        const SliverToBoxAdapter(
-          child: Padding(
-            padding: EdgeInsets.only(top: 9, bottom: 2),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _Dot(on: true),
-                SizedBox(width: 5),
-                _Dot(on: false),
-                SizedBox(width: 5),
-                _Dot(on: false),
-              ],
-            ),
-          ),
-        ),
+        // ---- .carousel — promo banners, from GET /app/home's banners[] ----
+        // No dummy fallback: if the API sends no banners, this section
+        // shows nothing at all, rather than the 3 hardcoded promo cards
+        // that used to be here regardless of what the API actually said.
+        if (vm.feed.banners.isNotEmpty)
+          SliverToBoxAdapter(child: _BannerCarousel(banners: vm.feed.banners)),
 
         // ---- .sec + .nearrail — "Nearest stores" -------------------------------
         const SliverToBoxAdapter(child: SectionHeader(title: 'Nearest stores')),
@@ -172,6 +191,173 @@ class _Dot extends StatelessWidget {
       decoration: BoxDecoration(color: on ? AppColors.sky : AppColors.cloud, borderRadius: BorderRadius.circular(4)),
     );
   }
+}
+
+class _BannerCarousel extends StatefulWidget {
+  final List<HomeBanner> banners;
+  const _BannerCarousel({required this.banners});
+
+  @override
+  State<_BannerCarousel> createState() => _BannerCarouselState();
+}
+
+class _BannerCarouselState extends State<_BannerCarousel> {
+  final _controller = PageController(viewportFraction: .92);
+  int _page = 0;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        SizedBox(
+          height: 188,
+          child: PageView.builder(
+            controller: _controller,
+            padEnds: false,
+            onPageChanged: (i) => setState(() => _page = i),
+            itemCount: widget.banners.length,
+            itemBuilder: (context, i) {
+              final banner = widget.banners[i];
+              return Padding(
+                padding: EdgeInsets.only(left: i == 0 ? 16 : 6, right: i == widget.banners.length - 1 ? 16 : 6),
+                child: _BannerCard(banner: banner),
+              );
+            },
+          ),
+        ),
+        if (widget.banners.length > 1)
+          Padding(
+            padding: const EdgeInsets.only(top: 9, bottom: 2),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                for (var i = 0; i < widget.banners.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 5),
+                  _Dot(on: i == _page),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Renders one confirmed `banners[]` entry. Title/sub/buttons are all
+/// optional per the confirmed response (a banner can be pure image — see
+/// the third example in the confirmed payload, which has empty title/sub
+/// and no buttons at all), so each piece only shows when actually present,
+/// rather than assuming every banner has full text content.
+class _BannerCard extends StatelessWidget {
+  final HomeBanner banner;
+  const _BannerCard({required this.banner});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasText = banner.title.isNotEmpty || banner.sub.isNotEmpty || banner.buttons.isNotEmpty;
+    // Tappable whenever the API actually gives us somewhere to go — either
+    // a button's own link, or (when there's no button but the image itself
+    // is marked clickable) that same first-button link as a fallback. If
+    // neither exists, the banner just isn't tappable rather than guessing
+    // a destination that was never specified.
+    final link = banner.buttons.isNotEmpty ? banner.buttons.first.link : null;
+    final onTap = (link != null && link.isNotEmpty) ? () => _openBannerLink(context, link) : null;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(AppRadius.card),
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          decoration: BoxDecoration(color: AppColors.blush, boxShadow: AppColors.shSm),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (banner.imageUrl.isNotEmpty)
+                Image.network(
+                  banner.imageUrl,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(color: AppColors.blush),
+                ),
+              // Readability scrim behind the text — only when there's text
+              // to actually read; a pure-image banner stays untouched.
+              if (hasText)
+                const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Color(0xCC0B2A4A), Colors.transparent],
+                      begin: Alignment.bottomCenter,
+                      end: Alignment.topCenter,
+                    ),
+                  ),
+                ),
+              if (hasText)
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (banner.title.isNotEmpty)
+                        Text(
+                          banner.emoji.isNotEmpty ? '${banner.title} ${banner.emoji}' : banner.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700, height: 1.2),
+                        ),
+                      if (banner.sub.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          banner.sub,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: Colors.white.withOpacity(.92), fontSize: 12, height: 1.25),
+                        ),
+                      ],
+                      if (banner.buttons.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
+                          child: Text(banner.buttons.first.text, style: const TextStyle(color: AppColors.navy, fontWeight: FontWeight.w700, fontSize: 12)),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Maps a banner's `link` (a relative WEB path, e.g. `/website/shop` or
+/// `/website/shop?deals=1` — confirmed live) to actual in-app navigation.
+/// This is a best-effort mapping for the destinations this app actually
+/// has a screen for, NOT a full web-route parser — an unrecognized path
+/// falls back to Shop (this app's main browsing surface) rather than
+/// doing nothing, since some destination is better than a dead tap.
+void _openBannerLink(BuildContext context, String link) {
+  final uri = Uri.tryParse(link);
+  final path = uri?.path ?? link;
+  if (path.contains('shop')) {
+    final wantsOffers = uri?.queryParameters['deals'] == '1' || uri?.queryParameters['offers'] == '1';
+    Navigator.pushNamed(context, Routes.shop, arguments: wantsOffers ? const ShopFilter(offersOnly: true) : null);
+    return;
+  }
+  if (path.contains('rx')) {
+    Navigator.pushNamed(context, Routes.myRx);
+    return;
+  }
+  Navigator.pushNamed(context, Routes.shop);
 }
 
 class PromoCard extends StatelessWidget {
@@ -316,21 +502,32 @@ class _NearStoreCard extends StatelessWidget {
               children: [
                 const Icon(Icons.electric_moped, size: 14, color: AppColors.danger),
                 const SizedBox(width: 4),
-                Text('${store.eta} mins', style: const TextStyle(fontSize: 11.5, color: AppColors.muted)),
+                Expanded(
+                  child: Text(
+                    etaLabel(store.eta),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11.5, color: AppColors.muted),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 7),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: store.offer != null ? AppColors.rose.withOpacity(.12) : AppColors.ok.withOpacity(.12),
-                borderRadius: BorderRadius.circular(20),
+            // Was: defaulted to "Free delivery" whenever there was no offer,
+            // regardless of the real store.freeDelivery field — claiming
+            // free delivery for stores that never said they offered it.
+            if (store.offer != null || store.freeDelivery)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: store.offer != null ? AppColors.rose.withOpacity(.12) : AppColors.ok.withOpacity(.12),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  store.offer != null ? 'Offers' : 'Free delivery',
+                  style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: store.offer != null ? AppColors.rose : AppColors.ok),
+                ),
               ),
-              child: Text(
-                store.offer != null ? 'Offers' : 'Free delivery',
-                style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: store.offer != null ? AppColors.rose : AppColors.ok),
-              ),
-            ),
           ],
         ),
       ),
@@ -374,7 +571,17 @@ class _StoreRow extends StatelessWidget {
                 children: [
                   Text(store.name, style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700, color: AppColors.navy, height: 1.3)),
                   const SizedBox(height: 3),
-                  Text('${store.eta} mins · Free delivery', style: const TextStyle(fontSize: 13, color: AppColors.muted)),
+                  // Was: always appended "· Free delivery" regardless of
+                  // the real store.freeDelivery field.
+                  Text(
+                    [
+                      etaLabel(store.eta),
+                      if (store.freeDelivery) 'Free delivery',
+                    ].join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, color: AppColors.muted),
+                  ),
                   if (store.offer != null)
                     Container(
                       margin: const EdgeInsets.only(top: 7),
@@ -391,4 +598,18 @@ class _StoreRow extends StatelessWidget {
       ),
     );
   }
+}
+/// Was unconditionally appending " mins" to whatever the API sent,
+/// assuming `eta` is always a bare range like "20-30" (per
+/// PharmacyStore.eta's own doc comment) — but at least one real pharmacy's
+/// `eta` value already has "mins" baked into the string itself, producing
+/// "8420-8440 mins mins". This checks for that first rather than assuming
+/// the API is always consistent about it. The "8420-8440" number itself is
+/// a separate, genuine backend data-quality issue (~140 hours is not a
+/// plausible delivery ETA) — worth flagging to Soumya, but not something
+/// the app should try to silently "correct" by guessing at intended values.
+String etaLabel(String eta) {
+  if (eta.isEmpty) return 'ETA unavailable';
+  if (RegExp(r'min', caseSensitive: false).hasMatch(eta)) return eta;
+  return '$eta mins';
 }

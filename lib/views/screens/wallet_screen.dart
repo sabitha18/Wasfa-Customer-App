@@ -6,7 +6,6 @@ import '../../core/widgets/async_state_view.dart';
 import '../../state/auth_state.dart';
 import '../../state/orders_state.dart';
 import '../widgets/page_header.dart';
-import '../widgets/toast.dart';
 
 class WalletScreen extends StatefulWidget {
   const WalletScreen({super.key});
@@ -80,16 +79,7 @@ class _WalletScreenState extends State<WalletScreen> {
                 const SizedBox(height: 4),
                 Text(Formatters.money(orders.wallet), style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w800)),
                 const SizedBox(height: 14),
-                Row(children: [
-                  Text('⭐ ${orders.rewards} points', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                  const Spacer(),
-                  ElevatedButton.icon(
-                    onPressed: () => showToast(context, 'Top-up isn\'t available from the app yet.'),
-                    icon: const Icon(Icons.add, size: 16),
-                    label: const Text('Top up'),
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: AppColors.navy, minimumSize: const Size(0, 36)),
-                  ),
-                ]),
+                Text('⭐ ${orders.rewards} points', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
               ],
             ),
           ),

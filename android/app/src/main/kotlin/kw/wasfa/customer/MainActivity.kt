@@ -1,4 +1,4 @@
-package com.example.wasfa_app
+package kw.wasfa.customer
 
 import io.flutter.embedding.android.FlutterActivity
 

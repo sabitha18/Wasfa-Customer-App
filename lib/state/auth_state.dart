@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../core/network/api_exception.dart';
+import '../core/notifications/notification_service.dart';
 import '../core/utils/session_store.dart';
 import '../data/models/app_user.dart';
 import '../data/services/auth_service.dart';
@@ -19,11 +20,21 @@ class AuthState extends ChangeNotifier {
   bool get isSignedIn => status == AuthStatus.signedIn && user != null;
   int? get userId => user?.id;
 
+  Future<void>? _restoreFuture;
+
   /// Call once at app start (see main.dart) to restore a saved session.
-  Future<void> restore() async {
+  /// Idempotent — safe to call again from anywhere that needs to actually
+  /// wait for restoration to finish (e.g. Splash, before building Home)
+  /// without re-running the whole thing a second time. Returns the SAME
+  /// in-flight/completed Future every time, rather than kicking off a
+  /// fresh [SessionStore.load] call on every call site.
+  Future<void> restore() => _restoreFuture ??= _doRestore();
+
+  Future<void> _doRestore() async {
     final saved = await SessionStore.load();
     user = saved;
     status = saved != null ? AuthStatus.signedIn : AuthStatus.signedOut;
+    if (saved != null) NotificationService.instance.registerTokenForUser(saved.id);
     notifyListeners();
   }
 
@@ -65,6 +76,7 @@ class AuthState extends ChangeNotifier {
       user = u;
       status = AuthStatus.signedIn;
       await SessionStore.save(u);
+      NotificationService.instance.registerTokenForUser(u.id);
       return true;
     } catch (e) {
       otpError = describeError(e);
@@ -75,10 +87,20 @@ class AuthState extends ChangeNotifier {
     }
   }
 
+  /// Call after a successful profile save so the newly-entered fields
+  /// (e.g. email) show up immediately in the Account header without
+  /// needing to sign out/in again.
+  Future<void> refreshUser(AppUser u) async {
+    user = u;
+    await SessionStore.save(u);
+    notifyListeners();
+  }
+
   Future<void> logout() async {
     user = null;
     status = AuthStatus.signedOut;
     await SessionStore.clear();
+    NotificationService.instance.clearRegisteredUser();
     notifyListeners();
   }
 }

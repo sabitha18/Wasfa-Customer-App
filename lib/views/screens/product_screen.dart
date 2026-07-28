@@ -5,7 +5,9 @@ import '../../core/routing/app_routes.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/async_state_view.dart';
+import '../../data/models/product.dart';
 import '../../data/models/seller.dart';
+import '../../state/auth_state.dart';
 import '../../state/cart_state.dart';
 import '../../viewmodels/product_view_model.dart';
 import '../widgets/product_image.dart';
@@ -18,8 +20,9 @@ class ProductScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final userId = context.read<AuthState>().userId;
     return ChangeNotifierProvider(
-      create: (_) => ProductViewModel(productId: productId, lockedToSeller: lockedToSeller),
+      create: (_) => ProductViewModel(productId: productId, lockedToSeller: lockedToSeller, userId: userId),
       child: const _ProductBody(),
     );
   }
@@ -34,7 +37,7 @@ class _ProductBody extends StatelessWidget {
     final cart = context.watch<CartState>();
     final p = vm.product;
     final sel = vm.selectedSeller;
-    final wished = cart.isWished(p.id);
+    final wished = cart.isWishedOrFallback(p.id, p.wishlistStatus);
 
     return Scaffold(
       appBar: AppBar(
@@ -63,8 +66,11 @@ class _ProductBody extends StatelessWidget {
         padding: const EdgeInsets.only(bottom: 24),
         children: [
           if (vm.error != null) InlineErrorBanner(message: vm.error!, onRetry: vm.load),
-          // .pdp-hero — height:220px, blush bg, 92px glyph
-          ProductImage(product: p, height: 220, emojiSize: 92),
+          // .pdp-hero — height:220px, blush bg, 92px glyph. Now a gallery
+          // when the PDP has more than one photo (confirmed live: `photos[]`
+          // — this was never parsed or shown at all before, only the single
+          // `image` field).
+          _ProductGallery(product: p),
           Padding(
             // .pdp-body — padding:16px 16px 24px
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
@@ -109,29 +115,41 @@ class _ProductBody extends StatelessWidget {
                 const Text('Key benefits', style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: AppColors.navy)),
                 const SizedBox(height: 10),
                 // .benef — gap:7px, margin:4px 0 18px
+                // Prefers the dashboard's real `tags` field (confirmed by the
+                // client as the actual intended source for this section) —
+                // falls back to the HTML prototype's category/concern/form
+                // synthesis only for products that don't have tags set yet,
+                // so this section doesn't just go blank for older/untagged
+                // products.
                 Padding(
                   padding: const EdgeInsets.only(top: 4, bottom: 18),
-                  child: Wrap(spacing: 7, runSpacing: 7, children: [
-                    for (final b in [p.category, p.concern, p.form].where((b) => b.isNotEmpty)) _BenefitTag(text: b),
-                  ]),
+                  child: Wrap(
+                    spacing: 7,
+                    runSpacing: 7,
+                    children: [
+                      for (final b in (p.tags.isNotEmpty ? p.tags : [p.category, p.concern, p.form]).where((b) => b.isNotEmpty))
+                        _BenefitTag(text: b),
+                    ],
+                  ),
                 ),
+                // Per the confirmed business rule: the PDP always shows exactly
+                // ONE pharmacy — picked automatically by ProductViewModel's
+                // existing rules (cheapest in-stock seller by default, or
+                // whichever pharmacy the person arrived from if they're
+                // browsing that pharmacy's storefront — see
+                // ProductViewModel.selectedSeller / lockedToSeller). There's
+                // no picker here for the person to choose a different one —
+                // that's only ever the result of the app's own selection
+                // logic. This previously showed a "Choose your pharmacy (N)"
+                // radio list whenever a product had more than one seller,
+                // which contradicted that rule and let the person override
+                // the pharmacy the app had already decided on.
                 Text(
-                  vm.sellers.length > 1 ? '🏪 Choose your pharmacy (${vm.sellers.length})' : '🏪 Sold by ${sel.name}',
+                  '🏪 Sold by ${sel.name}',
                   style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: AppColors.navy),
                 ),
                 const SizedBox(height: 10),
-                if (vm.sellers.length > 1)
-                  for (final s in vm.sellers)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _SellerOption(
-                        seller: s,
-                        selected: s.name == sel.name,
-                        onTap: () => vm.selectSeller(s.name),
-                      ),
-                    )
-                else
-                  _LockedSeller(seller: sel),
+                _LockedSeller(seller: sel),
                 const SizedBox(height: 8),
                 // .acc — bordered accordion box with +/- indicator (not a chevron)
                 _AccordionBox(
@@ -254,7 +272,7 @@ class _ProductBody extends StatelessWidget {
             onPressed: !sel.stock
                 ? null
                 : () {
-                    cart.addToCart(p, seller: sel.name, price: sel.price, was: sel.was, apiProductId: sel.productId);
+                    cart.addToCartRemote(context, p, seller: sel.name, price: sel.price, was: sel.was, apiProductId: sel.productId);
                     showToast(
                       context,
                       'Added to cart',
@@ -267,6 +285,165 @@ class _ProductBody extends StatelessWidget {
               style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// .pdp-hero + gallery thumbnails — confirmed live: the PDP's `photos[]`
+/// (its first entry is the same photo as the standalone `image` field, so
+/// this uses `photos` as the complete gallery rather than showing `image`
+/// separately from it). Falls back to the plain single-image [ProductImage]
+/// when there's no gallery data at all, rather than showing an empty
+/// thumbnail strip with nothing in it.
+class _ProductGallery extends StatefulWidget {
+  final Product product;
+  const _ProductGallery({required this.product});
+
+  @override
+  State<_ProductGallery> createState() => _ProductGalleryState();
+}
+
+class _ProductGalleryState extends State<_ProductGallery> {
+  int _index = 0;
+
+  void _openFullScreen(int startIndex) {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        opaque: false,
+        barrierColor: Colors.black,
+        pageBuilder: (context, _, __) => _FullScreenGallery(photos: widget.product.photos, initialIndex: startIndex),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final photos = widget.product.photos;
+    if (photos.isEmpty) {
+      return ProductImage(product: widget.product, height: 220, emojiSize: 92);
+    }
+    final heroUrl = photos[_index.clamp(0, photos.length - 1)];
+    return Column(
+      children: [
+        GestureDetector(
+          onTap: () => _openFullScreen(_index),
+          child: SizedBox(
+            height: 220,
+            width: double.infinity,
+            child: Image.network(
+              heroUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Container(color: AppColors.blush),
+            ),
+          ),
+        ),
+        if (photos.length > 1)
+          Container(
+            color: AppColors.bg,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: SizedBox(
+              height: 40,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: photos.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 6),
+                itemBuilder: (context, i) {
+                  final selected = i == _index;
+                  return GestureDetector(
+                    onTap: () => setState(() => _index = i),
+                    onDoubleTap: () => _openFullScreen(i),
+                    child: Container(
+                      width: 40, height: 40,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(7),
+                        border: Border.all(color: selected ? AppColors.sky : AppColors.line, width: selected ? 2 : 1),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: Image.network(
+                          photos[i],
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(color: AppColors.blush),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Full-screen photo viewer, opened by tapping the hero image (or a
+/// thumbnail). Swipeable between all of a product's photos, each
+/// pinch-zoomable via [InteractiveViewer] (built into Flutter — no extra
+/// package needed). Tap anywhere to dismiss.
+class _FullScreenGallery extends StatefulWidget {
+  final List<String> photos;
+  final int initialIndex;
+  const _FullScreenGallery({required this.photos, required this.initialIndex});
+
+  @override
+  State<_FullScreenGallery> createState() => _FullScreenGalleryState();
+}
+
+class _FullScreenGalleryState extends State<_FullScreenGallery> {
+  late final PageController _controller = PageController(initialPage: widget.initialIndex);
+  late int _index = widget.initialIndex;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            PageView.builder(
+              controller: _controller,
+              itemCount: widget.photos.length,
+              onPageChanged: (i) => setState(() => _index = i),
+              itemBuilder: (context, i) => InteractiveViewer(
+                minScale: 1,
+                maxScale: 4,
+                child: Center(
+                  child: Image.network(
+                    widget.photos[i],
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined, color: Colors.white38, size: 48),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 8, right: 8,
+              child: IconButton(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
+              ),
+            ),
+            if (widget.photos.length > 1)
+              Positioned(
+                bottom: 16,
+                left: 0, right: 0,
+                child: Text(
+                  '${_index + 1} / ${widget.photos.length}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -359,61 +536,6 @@ class _LockedSeller extends StatelessWidget {
           ),
           Text(Formatters.money(seller.price), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.navy)),
         ],
-      ),
-    );
-  }
-}
-
-/// A selectable pharmacy row for the PDP price-comparison list. Highlights
-/// the chosen seller (sky border/tint + filled radio) and stays tappable so
-/// the person can compare prices and pick which pharmacy to buy from.
-class _SellerOption extends StatelessWidget {
-  final Seller seller;
-  final bool selected;
-  final VoidCallback onTap;
-  const _SellerOption({required this.seller, required this.selected, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(13),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.skySelectedBg : Colors.white,
-          border: Border.all(color: selected ? AppColors.sky : AppColors.line, width: 1.5),
-          borderRadius: BorderRadius.circular(13),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              selected ? Icons.radio_button_checked_rounded : Icons.radio_button_unchecked_rounded,
-              size: 20,
-              color: selected ? AppColors.sky : AppColors.muted,
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(seller.name, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: AppColors.ink)),
-                  const SizedBox(height: 3),
-                  Text('🚚 ${seller.eta}   ${seller.stock ? "🟢 In stock" : "⚪ Out of stock"}', style: const TextStyle(fontSize: 11, color: AppColors.muted)),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(Formatters.money(seller.price), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.navy)),
-                if (seller.was != null)
-                  Text(Formatters.money(seller.was!), style: const TextStyle(fontSize: 11, color: AppColors.muted, decoration: TextDecoration.lineThrough)),
-              ],
-            ),
-          ],
-        ),
       ),
     );
   }

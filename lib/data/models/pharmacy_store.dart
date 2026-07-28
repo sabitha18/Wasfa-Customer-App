@@ -59,15 +59,20 @@ class PharmacyStore {
       area: area,
       category: asString(json, const ['category', 'type'], fallback: 'pharmacy'),
       // The live endpoint sends '' rather than omitting the key when there's
-      // no ETA yet — fall back to a placeholder range in that case too.
-      eta: eta.isNotEmpty ? eta : '30-45',
+      // no ETA yet — used to substitute a fake "30-45" placeholder here,
+      // which looked exactly like a real estimate. Left genuinely empty
+      // now; callers show "ETA unavailable" instead (see home_screen.dart).
+      eta: eta,
       fast: asBool(json, const ['fast']),
       pro: asBool(json, const ['pro']),
       // Real key is `free` (bool). Kept the old candidates too in case an
-      // older/alternate response shape is ever hit.
+      // older/alternate response shape is ever hit. Defaults to false (not
+      // true) if none of these keys exist at all — claiming delivery is
+      // free when that's genuinely unconfirmed could mislead someone about
+      // cost, which is worse than just not showing the "Free delivery" badge.
       freeDelivery: (json.containsKey('free') || json.containsKey('free_delivery') || json.containsKey('freeDelivery'))
           ? asBool(json, const ['free', 'free_delivery', 'freeDelivery'])
-          : true,
+          : false,
       // Real key is `offers` (bool: does this store have any offers right
       // now), not a text label — the UI only ever checks offer != null, so
       // map true -> a non-null marker, false/absent -> null.

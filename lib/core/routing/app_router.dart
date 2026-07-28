@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import '../../data/models/pharmacy_store.dart';
 import '../../views/screens/account_screen.dart';
-import '../../views/screens/address_list_screen.dart';
 import '../../views/screens/brands_screen.dart';
 import '../../views/screens/cart_screen.dart';
 import '../../views/screens/checkout_screen.dart';
 import '../../views/screens/coming_soon_screen.dart';
 import '../../views/screens/my_rx_screen.dart';
+import '../../views/screens/notifications_screen.dart';
 import '../../views/screens/order_detail_screen.dart';
 import '../../views/screens/orders_screen.dart';
 import '../../views/screens/login_screen.dart';
@@ -18,6 +18,7 @@ import '../../views/screens/requests_screen.dart';
 import '../../views/screens/root_shell.dart';
 import '../../views/screens/rx_detail_screen.dart';
 import '../../views/screens/shop_screen.dart';
+import '../../viewmodels/shop_view_model.dart';
 import '../../views/screens/store_screen.dart';
 import '../../views/screens/track_screen.dart';
 import '../../views/screens/wallet_screen.dart';
@@ -46,7 +47,12 @@ class AppRouter {
       case Routes.brands:
         return _page(BrandsScreen(store: args as PharmacyStore?));
       case Routes.shop:
-        return _page(const ShopScreen());
+        // Was silently dropping any filter argument before (always opened
+        // a plain, unfiltered ShopScreen) — needed so anything that wants
+        // to deep-link into Shop pre-filtered (e.g. a home banner linking
+        // to "?deals=1") actually works instead of just landing on the
+        // full, unfiltered catalogue.
+        return _page(ShopScreen(initialFilter: args as ShopFilter?));
       case Routes.product:
         return _page(ProductScreen(productId: args as int));
       case Routes.wishlist:
@@ -57,8 +63,6 @@ class AppRouter {
         return _page(const CartScreen());
       case Routes.checkout:
         return _page(const CheckoutScreen());
-      case Routes.addresses:
-        return _page(const AddressListScreen());
       case Routes.track:
         return _page(TrackScreen(orderId: args as String));
       case Routes.myRx:
@@ -75,6 +79,8 @@ class AppRouter {
         return _page(const PharmaciesScreen());
       case Routes.requests:
         return _page(const RequestsScreen());
+      case Routes.notifications:
+        return _page(const NotificationsScreen());
 
       // ---- 🚧 Phase 2 — placeholder screens --------------------------------
       default:

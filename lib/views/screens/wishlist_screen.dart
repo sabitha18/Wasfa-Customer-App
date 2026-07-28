@@ -80,7 +80,7 @@ class _WishlistScreenState extends State<WishlistScreen> {
 
     return GridView.builder(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: .58),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: .50),
       itemCount: products.length,
       itemBuilder: (context, i) => ProductCard(
         product: products[i],

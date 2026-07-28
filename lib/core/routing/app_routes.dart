@@ -31,6 +31,7 @@ class Routes {
   static const orderDetail = 'orderdetail';
   static const pharmacies = 'pharmacies';
   static const requests = 'requests';
+  static const notifications = 'notifications';
   static const reqItems = 'reqitems';
   static const reqReason = 'reqreason';
   static const reqDone = 'reqdone';

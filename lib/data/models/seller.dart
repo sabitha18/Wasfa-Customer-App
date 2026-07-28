@@ -24,7 +24,10 @@ class Seller {
   bool get hasDiscount => was != null && was! > price;
   int get discountPercent => hasDiscount ? (100 - (price / was! * 100)).round() : 0;
 
-  /// From PDP `sellers[]`: `{ product_id, name, price, stock, qty }`.
+  /// From PDP `sellers[]`: `{ product_id, name, price, in_stock, qty }` —
+  /// ✅ confirmed live (2026-07-24): the real field is `in_stock`, not
+  /// `stock`. `qty` is kept only as a fallback for shapes that omit
+  /// `in_stock` entirely.
   factory Seller.fromJson(Map<String, dynamic> json) => Seller(
         productId: asIntOrNull(json, const ['product_id', 'id']),
         name: asString(json, const ['name', 'seller', 'pharmacy', 'pharmacy_name']),
@@ -33,11 +36,8 @@ class Seller {
           'was', 'old_price', 'compare_at_price', 'compare_price', 'original_price', 'list_price', 'mrp', 'regular_price', 'strike_price',
         ]),
         eta: asString(json, const ['eta', 'delivery_eta']),
-        // `qty` in the sellers[] shape looks like an availability/stock count
-        // rather than a boolean — treat any qty > 0 (or an explicit `stock`
-        // flag) as in-stock. Confirm against a real PDP response.
-        stock: json.containsKey('stock')
-            ? asBool(json, const ['stock'])
+        stock: (json.containsKey('in_stock') || json.containsKey('stock'))
+            ? asBool(json, const ['in_stock', 'stock'])
             : asInt(json, const ['qty'], fallback: 1) > 0,
       );
 }

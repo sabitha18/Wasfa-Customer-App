@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../core/network/api_exception.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/async_state_view.dart';
 import '../../data/services/order_service.dart';
+import '../../state/auth_state.dart';
 import '../../state/orders_state.dart';
 import '../widgets/page_header.dart';
 import '../widgets/toast.dart';
@@ -21,7 +25,13 @@ class _TrackScreenState extends State<TrackScreen> {
   bool _loading = true;
   String? _error;
   String? _liveStatus; // normalized prep/way/done from the server, if reachable
+  String? _riderName;
+  String? _riderPhone;
+  String? _eta;
+  double? _lat;
+  double? _lng;
   Timer? _poll;
+  GoogleMapController? _mapController;
 
   @override
   void initState() {
@@ -34,25 +44,43 @@ class _TrackScreenState extends State<TrackScreen> {
   @override
   void dispose() {
     _poll?.cancel();
+    _mapController?.dispose();
     super.dispose();
   }
 
   Future<void> _fetch({bool silent = false}) async {
     if (!silent) setState(() { _loading = true; _error = null; });
+    final phone = context.read<AuthState>().user?.phone ?? '';
     try {
-      final info = await _service.track(widget.orderId);
+      final info = await _service.track(widget.orderId, mobile: phone);
       if (!mounted) return;
       setState(() {
         _liveStatus = info.status;
+        _riderName = info.riderName;
+        _riderPhone = info.riderPhone;
+        _eta = info.eta;
+        _lat = info.lat;
+        _lng = info.lng;
         _error = null;
       });
       // Keep the shared OrdersState in sync so Orders/Order Detail screens
       // reflect the same status without a separate fetch.
       final o = context.read<OrdersState>().byId(widget.orderId);
       if (o != null) o.status = info.status;
+      // Nudge the camera to the rider's latest position once we have one.
+      if (_lat != null && _lng != null && _mapController != null) {
+        _mapController!.animateCamera(CameraUpdate.newLatLng(LatLng(_lat!, _lng!)));
+      }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = silent ? _error : 'Couldn\'t refresh tracking. Showing the last known status.');
+      // Was hardcoded to a generic "couldn't refresh" message before,
+      // which threw away real, specific, actionable server messages like
+      // "Mobile number does not match this order" — the person had no way
+      // to know THAT was the actual problem, just that tracking was
+      // broken somehow. describeError surfaces what the server actually
+      // said (ApiClient already throws with the real `msg`/`message`
+      // field for any `{ok:false}` response, including this one).
+      setState(() => _error = silent ? _error : describeError(e));
     } finally {
       if (mounted && !silent) setState(() => _loading = false);
     }
@@ -60,235 +88,226 @@ class _TrackScreenState extends State<TrackScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final orders = context.watch<OrdersState>();
-    final order = orders.byId(widget.orderId) ?? orders.orders.first;
-    final status = _liveStatus ?? order.status;
+    // Was `orders.byId(widget.orderId) ?? orders.orders.first` — crashed
+    // with "Bad state: No element" whenever OrdersState.orders was empty
+    // (e.g. navigating here straight from a push notification tap, before
+    // ever visiting the Orders list screen this session — nothing had
+    // populated that list yet) AND, separately, ran on literally every
+    // build including the very first frame before _fetch() had even
+    // returned, so it could crash before there was any data at all. Worse,
+    // even when non-empty, `.first` would silently show a random,
+    // UNRELATED order rather than the one actually being tracked. Tracing
+    // every use of `order.*` in this whole file shows only `.id` (always
+    // just widget.orderId — this screen never needed a full cached Order
+    // at all) and `.status` (already overridden by the fresher _liveStatus
+    // from this screen's own /track fetch in nearly every real case) —
+    // so there was never really a need to reach into OrdersState.orders
+    // for rendering here in the first place.
+    final status = _liveStatus ?? 'prep';
     const labels = ['Order confirmed', 'Preparing your order', 'On the way', 'Delivered'];
     final idx = {'conf': 0, 'prep': 1, 'way': 2, 'done': 3}[status] ?? 1;
 
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: PageHeader(title: 'Track order · ${order.id}'),
+      appBar: PageHeader(title: 'Track order · ${widget.orderId}'),
       body: _loading
           ? const LoadingView(message: 'Loading tracking…')
           : RefreshIndicator(
         onRefresh: _fetch,
         child: ListView(
-        padding: EdgeInsets.zero,
-        children: [
-          if (_error != null) InlineErrorBanner(message: _error!, onRetry: _fetch),
-          // ── .map — gradient bg, grid lines, dashed route, teardrop pins ──
-          const _TrackMap(),
+          padding: EdgeInsets.zero,
+          children: [
+            if (_error != null) InlineErrorBanner(message: _error!, onRetry: _fetch),
+            // ── .map — live rider location, only shown once the order is
+            // actually on the way. Before that (and after delivery) there's
+            // nothing real to show, so we show a status card instead of a
+            // fake/static map.
+            _TrackMapArea(status: status, lat: _lat, lng: _lng, onMapCreated: (c) => _mapController = c),
 
-          // ── .ridercard ──
-          Container(
-            margin: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-            padding: const EdgeInsets.all(13),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), boxShadow: AppColors.shSm),
-            child: Row(children: [
-              Container(
-                width: 48, height: 48,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(colors: [AppColors.sky, AppColors.navy], begin: Alignment.topLeft, end: Alignment.bottomRight),
-                  borderRadius: BorderRadius.circular(13),
-                ),
-                alignment: Alignment.center,
-                child: const Text('AR', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Ahmad R.', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.navy)),
-                    const SizedBox(height: 1),
-                    const Text('Express Rider', style: TextStyle(fontSize: 11.5, color: AppColors.sky, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 2),
-                    Text('${order.id} · Arriving in ~25 min', style: const TextStyle(fontSize: 10.5, color: AppColors.muted)),
-                  ],
-                ),
-              ),
-              GestureDetector(
-                onTap: () => showToast(context, 'Calling rider…'),
-                child: Container(
-                  width: 44, height: 44,
-                  decoration: BoxDecoration(color: AppColors.ok, borderRadius: BorderRadius.circular(13)),
-                  alignment: Alignment.center,
-                  child: const Icon(Icons.call_rounded, color: Colors.white, size: 18),
-                ),
-              ),
-            ]),
-          ),
-
-          // ── .timeline ──
-          Container(
-            margin: const EdgeInsets.fromLTRB(16, 10, 16, 14),
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), boxShadow: AppColors.shSm),
-            child: Column(
-              children: [
-                for (var i = 0; i < labels.length; i++)
-                  _TimelineStep(
-                    label: labels[i],
-                    done: i < idx,
-                    current: i == idx,
-                    isLast: i == labels.length - 1,
+            // ── .ridercard ──
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+              padding: const EdgeInsets.all(13),
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), boxShadow: AppColors.shSm),
+              child: Row(children: [
+                Container(
+                  width: 48, height: 48,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(colors: [AppColors.sky, AppColors.navy], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                    borderRadius: BorderRadius.circular(13),
                   ),
-              ],
-            ),
-          ),
-
-          // ── .btn-ghost — full-width "Home" button ──
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.bg,
-                  foregroundColor: AppColors.navy,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
-                  elevation: 0,
+                  alignment: Alignment.center,
+                  child: Text(_riderInitials(_riderName), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
                 ),
-                onPressed: () => Navigator.of(context).popUntil((r) => r.isFirst),
-                child: const Text('Home', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(_riderName ?? (status == 'way' ? 'Rider' : 'Not assigned yet'),
+                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.navy)),
+                      const SizedBox(height: 1),
+                      const Text('Express Rider', style: TextStyle(fontSize: 11.5, color: AppColors.sky, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 2),
+                      Text(
+                        _eta != null ? '${widget.orderId} · Arriving in ~$_eta' : widget.orderId,
+                        style: const TextStyle(fontSize: 10.5, color: AppColors.muted),
+                      ),
+                    ],
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () => _callRider(context),
+                  child: Container(
+                    width: 44, height: 44,
+                    decoration: BoxDecoration(color: AppColors.ok, borderRadius: BorderRadius.circular(13)),
+                    alignment: Alignment.center,
+                    child: const Icon(Icons.call_rounded, color: Colors.white, size: 18),
+                  ),
+                ),
+              ]),
+            ),
+
+            // ── .timeline ──
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), boxShadow: AppColors.shSm),
+              child: Column(
+                children: [
+                  for (var i = 0; i < labels.length; i++)
+                    _TimelineStep(
+                      label: labels[i],
+                      done: i < idx,
+                      current: i == idx,
+                      isLast: i == labels.length - 1,
+                    ),
+                ],
               ),
             ),
-          ),
+
+            // ── .btn-ghost — full-width "Home" button ──
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.bg,
+                    foregroundColor: AppColors.navy,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+                    elevation: 0,
+                  ),
+                  onPressed: () => Navigator.of(context).popUntil((r) => r.isFirst),
+                  child: const Text('Home', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _riderInitials(String? name) {
+    if (name == null || name.trim().isEmpty) return '?';
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+    return (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
+  }
+
+  /// Was just `showToast(context, 'Calling rider…')` — a fake toast that
+  /// never actually called anyone, regardless of whether a rider was even
+  /// assigned. Now places a real call via `tel:` when there's a real
+  /// number, and says so honestly when there isn't, instead of pretending
+  /// to dial.
+  ///
+  /// NEEDS `url_launcher` ADDED TO pubspec.yaml — this file's session only
+  /// has access to `lib/`, not the project root, so that dependency
+  /// couldn't be added directly here. Run `flutter pub add url_launcher`.
+  Future<void> _callRider(BuildContext context) async {
+    final phone = _riderPhone;
+    if (phone == null || phone.trim().isEmpty) {
+      showToast(context, 'No rider phone number available yet.');
+      return;
+    }
+    final uri = Uri(scheme: 'tel', path: phone);
+    try {
+      final launched = await launchUrl(uri);
+      if (!launched && context.mounted) showErrorToast(context, 'Couldn\'t open the phone dialer.');
+    } catch (_) {
+      if (context.mounted) showErrorToast(context, 'Couldn\'t open the phone dialer.');
+    }
+  }
+}
+
+// ── .map — live rider location once the order is on the way; a plain
+// status card the rest of the time (nothing real to show before/after that
+// window, so we don't fake it).
+class _TrackMapArea extends StatelessWidget {
+  final String status; // conf, prep, way, done
+  final double? lat;
+  final double? lng;
+  final ValueChanged<GoogleMapController> onMapCreated;
+
+  const _TrackMapArea({required this.status, required this.lat, required this.lng, required this.onMapCreated});
+
+  @override
+  Widget build(BuildContext context) {
+    if (status == 'way' && lat != null && lng != null) {
+      return SizedBox(
+        height: 210,
+        child: GoogleMap(
+          initialCameraPosition: CameraPosition(target: LatLng(lat!, lng!), zoom: 15),
+          onMapCreated: onMapCreated,
+          markers: {
+            Marker(
+              markerId: const MarkerId('rider'),
+              position: LatLng(lat!, lng!),
+              icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRose),
+              infoWindow: const InfoWindow(title: 'Your rider'),
+            ),
+          },
+          myLocationButtonEnabled: false,
+          zoomControlsEnabled: false,
+          liteModeEnabled: false,
+        ),
+      );
+    }
+
+    // status == 'way' but the backend hasn't sent a location yet, or the
+    // order isn't on the way (yet, or anymore) — show a plain status card
+    // instead of any map.
+    final String message;
+    final IconData icon;
+    switch (status) {
+      case 'way':
+        message = 'Waiting for your rider\'s live location…';
+        icon = Icons.my_location_rounded;
+        break;
+      case 'done':
+        message = 'Delivered — thanks for ordering with WASFA!';
+        icon = Icons.check_circle_rounded;
+        break;
+      default:
+        message = 'Live driver location will appear here once your order is on the way.';
+        icon = Icons.local_shipping_rounded;
+    }
+
+    return Container(
+      height: 150,
+      margin: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(15), border: Border.all(color: AppColors.line)),
+      alignment: Alignment.center,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: AppColors.sky, size: 28),
+          const SizedBox(height: 10),
+          Text(message, textAlign: TextAlign.center, style: const TextStyle(fontSize: 13, color: AppColors.muted, fontWeight: FontWeight.w600)),
         ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── .map — matches HTML's stylized delivery map exactly ──
-class _TrackMap extends StatelessWidget {
-  const _TrackMap();
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 210,
-      child: ClipRect(
-        child: Stack(children: [
-          // Gradient background
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft, end: Alignment.bottomRight,
-                colors: [Color(0xFFdCEef7), Color(0xFFeaf4fa)],
-              ),
-            ),
-          ),
-          // Grid lines
-          Positioned.fill(child: CustomPaint(painter: _GridPainter())),
-          // Dashed curved route
-          Positioned(
-            left: 0, top: 0, right: 0, bottom: 0,
-            child: CustomPaint(painter: _RoutePainter()),
-          ),
-          // Rider pin (rose, top-left area)
-          Positioned(
-            left: MediaQuery.of(context).size.width * 0.24 - 19,
-            top: 210 * 0.30 - 19,
-            child: _TeardropPin(color: AppColors.rose, icon: Icons.local_shipping_rounded),
-          ),
-          // Destination pin (navy, bottom-right area)
-          Positioned(
-            right: MediaQuery.of(context).size.width * 0.22 - 19,
-            bottom: 210 * 0.22 - 19,
-            child: _TeardropPin(color: AppColors.navy, icon: Icons.location_on_rounded),
-          ),
-        ]),
-      ),
-    );
-  }
-}
-
-class _GridPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = AppColors.navy.withOpacity(0.05)
-      ..strokeWidth = 1;
-    const step = 30.0;
-    for (double x = 0; x < size.width; x += step) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    }
-    for (double y = 0; y < size.height; y += step) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-class _RoutePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Rect.fromLTWH(size.width * 0.20, size.height * 0.32, size.width * 0.55, size.height * 0.40);
-    final path = Path()
-      ..addArc(rect, -2.0, 2.4); // approximates the HTML's asymmetric rounded arc
-
-    final dashed = _dashPath(path, dashLength: 6, gapLength: 5);
-    final paint = Paint()
-      ..color = AppColors.sky.withOpacity(0.5)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3;
-    canvas.drawPath(dashed, paint);
-  }
-
-  Path _dashPath(Path source, {required double dashLength, required double gapLength}) {
-    final dest = Path();
-    for (final metric in source.computeMetrics()) {
-      double distance = 0;
-      bool draw = true;
-      while (distance < metric.length) {
-        final len = draw ? dashLength : gapLength;
-        final next = (distance + len).clamp(0, metric.length).toDouble(); // ← added .toDouble()
-        if (draw) dest.addPath(metric.extractPath(distance, next), Offset.zero);
-        distance = next;
-        draw = !draw;
-      }
-    }
-    return dest;
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-// Teardrop map pin — rounded square rotated 45°, matching HTML's .mpin
-class _TeardropPin extends StatelessWidget {
-  final Color color;
-  final IconData icon;
-  const _TeardropPin({required this.color, required this.icon});
-
-  @override
-  Widget build(BuildContext context) {
-    return Transform.rotate(
-      angle: -45 * 3.1415926 / 180,
-      child: Container(
-        width: 38, height: 38,
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(19),
-            topRight: Radius.circular(19),
-            bottomLeft: Radius.circular(19),
-            bottomRight: Radius.zero,
-          ),
-          boxShadow: [BoxShadow(color: color.withOpacity(0.5), blurRadius: 16, offset: const Offset(0, 6))],
-        ),
-        child: Center(
-          child: Transform.rotate(
-            angle: 45 * 3.1415926 / 180,
-            child: Icon(icon, color: Colors.white, size: 16),
-          ),
-        ),
       ),
     );
   }

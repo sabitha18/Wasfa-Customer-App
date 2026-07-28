@@ -3,10 +3,19 @@ import 'seller.dart';
 
 class Product {
   final int id;
-  /// Canonical `apix_sku` — required for the PDP endpoint
-  /// (`GET /app/product/{sku}`) and useful as a stable key across catalog
-  /// refreshes even if the numeric `id` were ever to change.
+  /// A separate internal catalog code (e.g. `"a16346"`) — kept for display/
+  /// reference, but NOT what the PDP fetch or order-line resolution should
+  /// use. See [apixSku] for that.
   final String sku;
+  /// The identifier the single-product endpoint actually needs —
+  /// `GET /app/product/{apix_sku}` — confirmed against a real `/app/products`
+  /// response where `sku` and `apix_sku` were two different values on the
+  /// same item (e.g. `sku: "a16346"`, `apix_sku: "10078"`). The class doc
+  /// used to claim these were interchangeable/the same field under two
+  /// names — that was wrong; they're genuinely separate codes, and using
+  /// `sku` for a PDP fetch or checkout's order-line resolution was sending
+  /// the wrong identifier.
+  final String apixSku;
   final String nameEn;
   final String nameAr;
   final String brand;
@@ -16,6 +25,10 @@ class Product {
   final String scientificName;
   final String emoji; // placeholder "photo" (emoji) — swap for real asset later
   final String? imageUrl; // real product photo, once the API returns one
+  /// ✅ Confirmed live on the PDP (`GET /app/product/{sku}`): a gallery of
+  /// additional photos beyond the single [imageUrl] hero shot. Not present
+  /// on the PLP's list items — only ever populated after a full PDP fetch.
+  final List<String> photos;
   /// `seller_count` from the PLP — the listing endpoint only ever gives us
   /// a single synthesized [Seller] (see [Product.fromJson]), so this is what
   /// the "🏪 N pharmacies" UI should show instead of `sellers.length`. Null
@@ -25,11 +38,28 @@ class Product {
   final int reviews;
   final List<String> flags; // offer, best, new
   final String? tag; // "1+1"
+  /// The dashboard's product "tags" field — confirmed by the client as the
+  /// actual intended source for the PDP's "Key benefits" chips (e.g. "Female
+  /// care"). This is distinct from [flags] ('offer'/'best'/'new' — UI
+  /// behaviour flags) and from [tag] (the "1+1" promo badge) — `tags` here
+  /// is free-form editorial content set per-product in the dashboard.
+  final List<String> tags;
   final List<Seller> sellers;
+  /// Confirmed live on `/app/products` list items — whether the *signed-in*
+  /// user already has this wished/carted, straight from the server rather
+  /// than something the app has to infer from local state. `offerStatus`/
+  /// `discountPct` are the real discount signal (see [isOffer]) — replacing
+  /// the old approach of guessing from a `was`/`compare_price` value being
+  /// merely present.
+  final bool wishlistStatus;
+  final bool cartStatus;
+  final bool offerStatus;
+  final int? discountPct;
 
   const Product({
     required this.id,
     this.sku = '',
+    this.apixSku = '',
     required this.nameEn,
     required this.nameAr,
     required this.brand,
@@ -39,18 +69,39 @@ class Product {
     required this.scientificName,
     required this.emoji,
     this.imageUrl,
+    this.photos = const [],
     this.apiSellerCount,
     required this.rating,
     required this.reviews,
     this.flags = const [],
     this.tag,
+    this.tags = const [],
     required this.sellers,
+    this.wishlistStatus = false,
+    this.cartStatus = false,
+    this.offerStatus = false,
+    this.discountPct,
   });
 
   String name(bool arabic) => arabic ? nameAr : nameEn;
 
-  bool get isOffer => flags.contains('offer') || sellers.any((s) => s.was != null);
+  /// Prefers the confirmed `offer_status` field; falls back to the older
+  /// flags/compare-price-based guess for anything that doesn't send it
+  /// (e.g. a Product built before this field existed, like the Rx flow's
+  /// synthesized entries).
+  bool get isOffer => offerStatus || flags.contains('offer') || sellers.any((s) => s.was != null);
   bool get isBestSeller => flags.contains('best');
+
+  /// What to actually pass to `GET /app/product/{..}` — ✅ confirmed live
+  /// (2026-07-24): this endpoint wants [sku], NOT [apixSku] — passing
+  /// apix_sku here 404s. Falls back to [apixSku] then [id] only if [sku]
+  /// is genuinely empty, so a PDP fetch is at least attempted rather than
+  /// skipped outright. (Note this is the OPPOSITE priority from the
+  /// wishlist-toggle endpoint, which wants the real [sku] too, but for a
+  /// different confirmed reason — see [AccountService.toggleWish]'s doc.
+  /// Different endpoints on this backend genuinely want different
+  /// identifiers; there's no one universal rule here.)
+  String get pdpIdentifier => sku.isNotEmpty ? sku : (apixSku.isNotEmpty ? apixSku : id.toString());
   bool get isNew => flags.contains('new');
   bool get isBogo => tag == '1+1';
 
@@ -94,18 +145,21 @@ class Product {
     'Health': '❤️',
   };
 
-  /// PLP item (grouped by `apix_sku`): `{ apix_sku, name, name_ar, brand,
-  /// category, ... }`, optionally without a full `sellers[]` (that's added
-  /// on the PDP). When there's no sellers array, a single seller is
-  /// synthesized from the item's own price/was/stock fields so every other
-  /// getter (bestPrice, isOffer, etc.) keeps working unchanged.
-  ///
-  /// NOTE: field names below are our best guess from the collection's prose
-  /// description ("grouped by apix_sku") — confirm against a real `/app/
-  /// products` response and trim the candidate-key lists in json_utils calls
-  /// if the backend uses different names.
+  /// PLP item: confirmed live shape includes `product_id`, `sku`,
+  /// `apix_sku`, `name`, `name_ar`, `brand`, `category`, `image`, `price`,
+  /// `seller_count`, `pharmacy_name`, `wishlist_status`, `cart_status`,
+  /// `in_stock`, `rating`, `unit`, `min_qty`, `compare_price`,
+  /// `offer_status`, `discount_pct` — each PLP row is already scoped to one
+  /// specific seller's listing (hence `pharmacy_name`/`price` sitting at
+  /// the top level, not nested); `seller_count` just hints there may be
+  /// more sellers to see via the PDP, which is where a real `sellers[]`
+  /// array replaces the single synthesized one built below.
   factory Product.fromJson(Map<String, dynamic> json) {
-    final sku = asString(json, const ['apix_sku', 'sku', 'id']);
+    final sku = asString(json, const ['sku']);
+    final apixSku = asString(json, const ['apix_sku']);
+    // Some identifier to key the product on internally even if neither of
+    // the above is present for some reason.
+    final anyId = sku.isNotEmpty ? sku : (apixSku.isNotEmpty ? apixSku : asString(json, const ['id']));
     final category = asString(json, const ['category']);
     final sellersJson = asList(json, const ['sellers']);
     final sellers = sellersJson.isNotEmpty
@@ -114,18 +168,21 @@ class Product {
             if (json.containsKey('price'))
               Seller(
                 productId: asIntOrNull(json, const ['product_id']),
-                name: asString(json, const ['seller', 'pharmacy', 'pharmacy_name'], fallback: 'WASFA'),
+                name: asString(json, const ['pharmacy_name', 'seller', 'pharmacy'], fallback: 'WASFA'),
                 price: asDouble(json, const ['price']),
+                // `compare_price` confirmed live as the real discount field —
+                // kept the old guessed names after it as a fallback only.
                 was: asDoubleOrNull(json, const [
-                  'was', 'old_price', 'compare_at_price', 'compare_price', 'original_price', 'list_price', 'mrp', 'regular_price', 'strike_price',
+                  'compare_price', 'was', 'old_price', 'compare_at_price', 'original_price', 'list_price', 'mrp', 'regular_price', 'strike_price',
                 ]),
                 eta: asString(json, const ['eta', 'delivery_eta']),
                 stock: asBool(json, const ['in_stock', 'stock'], fallback: true),
               ),
           ];
     return Product(
-      id: asInt(json, const ['id'], fallback: int.tryParse(sku) ?? sku.hashCode),
+      id: asInt(json, const ['id'], fallback: int.tryParse(anyId) ?? anyId.hashCode),
       sku: sku,
+      apixSku: apixSku,
       nameEn: asString(json, const ['name_en', 'name']),
       nameAr: asString(json, const ['name_ar', 'nameAr']),
       brand: asString(json, const ['brand']),
@@ -135,6 +192,7 @@ class Product {
       scientificName: asString(json, const ['scientific_name', 'generic_name']),
       emoji: asStringOrNull(json, const ['emoji']) ?? _categoryEmoji[category] ?? '💊',
       imageUrl: asStringOrNull(json, const ['image', 'image_url', 'photo']),
+      photos: asList(json, const ['photos']).map((e) => e.toString()).where((s) => s.isNotEmpty).toList(),
       // Only trust `seller_count` as a display hint when this came from the
       // PLP (no full `sellers[]` array) — a PDP response's own sellers list
       // is the real, authoritative count.
@@ -143,7 +201,16 @@ class Product {
       reviews: asInt(json, const ['reviews', 'reviews_count']),
       flags: asList(json, const ['flags']).map((e) => e.toString()).toList(),
       tag: asStringOrNull(json, const ['tag', 'promo_tag']),
+      // Dashboard-authored "tags" field driving the PDP's "Key benefits"
+      // chips — field name is a best guess ('tags') per the client's
+      // description; confirm against a real response and adjust if the
+      // backend uses a different key.
+      tags: asList(json, const ['tags']).map((e) => e.toString()).where((s) => s.isNotEmpty).toList(),
       sellers: sellers,
+      wishlistStatus: asBool(json, const ['wishlist_status']),
+      cartStatus: asBool(json, const ['cart_status']),
+      offerStatus: asBool(json, const ['offer_status']),
+      discountPct: asIntOrNull(json, const ['discount_pct']),
     );
   }
 }

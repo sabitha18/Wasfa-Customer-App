@@ -5,14 +5,18 @@ import '../../core/theme/app_colors.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/utils/auth_gate.dart';
 import '../../core/widgets/async_state_view.dart';
-import '../../data/repositories/catalog_repository.dart';
+import '../../data/models/checkout_init.dart';
+import '../../data/services/account_service.dart';
+import '../../data/services/tap_payment_service.dart';
 import '../../state/address_state.dart';
+import '../../state/app_settings_state.dart';
 import '../../state/auth_state.dart';
 import '../../state/cart_state.dart';
 import '../../state/location_state.dart';
 import '../../state/orders_state.dart';
 import '../../viewmodels/checkout_view_model.dart';
 import '../widgets/page_header.dart';
+import '../widgets/address_sheets.dart';
 import '../widgets/toast.dart';
 import 'track_screen.dart';
 import '../../data/models/address.dart';
@@ -24,36 +28,126 @@ class CheckoutScreen extends StatefulWidget {
 }
 
 class _CheckoutScreenState extends State<CheckoutScreen> {
+  CheckoutInitData? _initData;
+  bool _initLoading = true;
+  String? _initError;
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       final addressState = context.read<AddressState>();
-      addressState.loadAreas();
+      final location = context.read<LocationState>();
+      await addressState.loadAreas();
+      // Match the GPS-detected area against the real catalog now that it's
+      // loaded, so "Current location" (the default) carries a real
+      // governorate/area, not just a display label.
+      addressState.syncFromLocation(governorate: location.governorate, area: location.area, street: location.street);
       final auth = context.read<AuthState>();
-      if (auth.isSignedIn) addressState.loadAddresses(auth.userId!);
+      if (auth.isSignedIn) {
+        addressState.loadAddresses(auth.userId!);
+        _loadCheckoutInit(auth.userId!);
+      } else {
+        setState(() => _initLoading = false);
+      }
     });
+  }
+
+  /// `GET /app/checkout` — confirmed live, consolidates cart/addresses/
+  /// delivery-slots/payment-methods/wallet/promotions in one call. Feeds
+  /// the result into the other providers that already display this data
+  /// (AddressState/AppSettingsState/OrdersState), so those screens' own
+  /// existing rendering just picks it up via their normal watch — only
+  /// delivery slots and the promo/totals section need to read [_initData]
+  /// directly, since nothing else already renders those.
+  Future<void> _loadCheckoutInit(int userId) async {
+    setState(() => _initLoading = true);
+    try {
+      final data = await AccountService.instance.checkoutInit(userId);
+      if (!mounted) return;
+      context.read<AddressState>().hydrateAddresses(data.addresses);
+      context.read<AppSettingsState>().applyFromCheckout(data.paymentMethods.enabledKeys);
+      context.read<OrdersState>().syncWalletBalance(data.walletBalance);
+      setState(() {
+        _initData = data;
+        _initLoading = false;
+        _initError = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _initLoading = false;
+        // Non-blocking — checkout still works from local cart computation/
+        // the mock-free empty delivery-slots state; this just means the
+        // real promo list and server-computed totals aren't available yet.
+        _initError = describeError(e);
+      });
+    }
+  }
+
+  void _onInitDataChanged(CheckoutInitData data) {
+    if (!mounted) return;
+    context.read<OrdersState>().syncWalletBalance(data.walletBalance);
+    setState(() => _initData = data);
   }
 
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
       create: (_) => CheckoutViewModel(),
-      child: const _CheckoutBody(),
+      child: _CheckoutBody(
+        initData: _initData,
+        initLoading: _initLoading,
+        initError: _initError,
+        onInitDataChanged: _onInitDataChanged,
+      ),
     );
   }
 }
 
 class _CheckoutBody extends StatelessWidget {
-  const _CheckoutBody();
+  final CheckoutInitData? initData;
+  final bool initLoading;
+  final String? initError;
+  final ValueChanged<CheckoutInitData> onInitDataChanged;
+  const _CheckoutBody({required this.initData, required this.initLoading, required this.initError, required this.onInitDataChanged});
 
   @override
   Widget build(BuildContext context) {
     final vm = context.watch<CheckoutViewModel>();
     final cart = context.watch<CartState>();
     final addressState = context.watch<AddressState>();
+    final location = context.watch<LocationState>();
     final totals = cart.computeTotals();
-    final a = addressState.selected;
+    final a = addressState.effectiveAddress;
+
+    // CheckoutScreen's initState only ever calls syncFromLocation ONCE, right
+    // when the page first mounts. If the device's GPS/reverse-geocode hadn't
+    // resolved yet at that exact moment, that one attempt silently no-ops
+    // (see syncFromLocation's doc) and currentLocationAddress is left null
+    // forever for this screen instance — so effectiveAddress permanently
+    // fell back to whatever saved address happens to be selected, even
+    // though "Current location" was still the active choice. Watching
+    // LocationState here and re-attempting once it actually has data fixes
+    // the "hadn't resolved yet" case: this keeps retrying (harmlessly) until
+    // it succeeds, then never needs to again. It deliberately stops once
+    // [AddressState.currentLocationMatchFailed] is true, though — that
+    // means a real attempt already ran and genuinely found no match (e.g.
+    // testing/traveling from outside Kuwait entirely), and retrying that
+    // forever would just be pointless busywork every rebuild.
+    if (addressState.useCurrentLocation &&
+        addressState.currentLocationAddress == null &&
+        !addressState.currentLocationMatchFailed &&
+        (location.governorate?.isNotEmpty ?? false)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        // Guarded by the same condition again in case something else beat
+        // us to it between scheduling and running this callback.
+        if (addressState.useCurrentLocation && addressState.currentLocationAddress == null && !addressState.currentLocationMatchFailed) {
+          addressState.syncFromLocation(governorate: location.governorate, area: location.area, street: location.street);
+        }
+      });
+    }
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -61,15 +155,51 @@ class _CheckoutBody extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.only(bottom: 120),
         children: [
+          if (initError != null)
+            // Non-blocking — checkout still works from local computation
+            // while this failed, so this is a note, not a hard stop.
+            InlineErrorBanner(message: 'Some checkout details didn\'t load: $initError', onRetry: null)
+          else if (initLoading && initData == null)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Row(children: [
+                SizedBox(width: 13, height: 13, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.sky)),
+                SizedBox(width: 8),
+                Text('Loading checkout details…', style: TextStyle(fontSize: 11.5, color: AppColors.muted)),
+              ]),
+            ),
           // ── .sec2 — "Shipping address" + edit icon ──
           _Sec2(
             label: 'Shipping address',
-            onEdit: () => _openAddressForm(context, addressState, addressState.selectedIndex),
+            onEdit: a == null ? () => showAddressFormSheet(context, addressState, -1) : () => showAddressFormSheet(context, addressState, addressState.selectedIndex),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-            child: GestureDetector(
-              onTap: () => _openAddressPicker(context, addressState),
+            child: a == null
+                // Genuinely no address to show — a real empty state, not a
+                // fabricated placeholder address (see AddressState.addresses'
+                // doc for why that used to happen).
+                ? GestureDetector(
+                    onTap: () => showAddressFormSheet(context, addressState, -1),
+                    child: Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        border: Border.all(color: AppColors.rose, width: 1.5),
+                        borderRadius: BorderRadius.circular(13),
+                      ),
+                      child: Row(children: [
+                        const Icon(Icons.add_location_alt_outlined, size: 18, color: AppColors.rose),
+                        const SizedBox(width: 10),
+                        const Expanded(
+                          child: Text('Add a delivery address to continue', style: TextStyle(color: AppColors.rose, fontWeight: FontWeight.w600, fontSize: 12.5)),
+                        ),
+                        const Icon(Icons.chevron_right_rounded, color: AppColors.rose, size: 16),
+                      ]),
+                    ),
+                  )
+                : GestureDetector(
+              onTap: () => showAddressPickerSheet(context, addressState, context.read<LocationState>()),
               child: Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
@@ -110,10 +240,16 @@ class _CheckoutBody extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Column(children: [
-                for (var i = 0; i < CatalogRepository.deliverySlots.length; i++)
+                // Real slots from checkout-init (GET /app/checkout) — no
+                // mock/dummy fallback list; if this hasn't loaded yet or
+                // came back empty, there's simply nothing to pick here yet
+                // rather than showing invented placeholder times.
+                for (var i = 0; i < (initData?.deliverySlots.length ?? 0); i++)
                   _PayOption(
                     icon: Icons.schedule_rounded,
-                    label: '${CatalogRepository.deliverySlots[i][0]} – ${CatalogRepository.deliverySlots[i][1]}',
+                    label: initData!.deliverySlots[i].amount > 0
+                        ? '${initData!.deliverySlots[i].title} · ${Formatters.money(initData!.deliverySlots[i].amount)}'
+                        : initData!.deliverySlots[i].title,
                     on: vm.slotTimeIndex == i,
                     onTap: () => vm.setSlotTime(i),
                   ),
@@ -122,15 +258,36 @@ class _CheckoutBody extends StatelessWidget {
           ],
 
           const _HLbl(label: 'Payment method'),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Column(children: [
-              _PayOption(icon: Icons.credit_card_rounded, label: 'KNET', on: vm.pay == 'knet', onTap: () => vm.setPay('knet')),
-              _PayOption(icon: Icons.credit_card_rounded, label: 'Card', on: vm.pay == 'card', onTap: () => vm.setPay('card')),
-              _PayOption(icon: Icons.account_balance_wallet_rounded, label: 'Wallet · ${Formatters.money(context.watch<OrdersState>().wallet)}', on: vm.pay == 'wallet', onTap: () => vm.setPay('wallet')),
-              _PayOption(icon: Icons.payments_rounded, label: 'Cash on delivery', on: vm.pay == 'cod', onTap: () => vm.setPay('cod')),
-            ]),
-          ),
+          Builder(builder: (context) {
+            final settings = context.watch<AppSettingsState>();
+            final enabled = settings.enabledPaymentMethods;
+            // If the currently-selected method got disabled from the
+            // dashboard (or the settings fetch only just came back), fall
+            // back to the first still-enabled one rather than leaving the
+            // order stuck on a payment method that's no longer offered.
+            if (!enabled.contains(vm.pay) && enabled.isNotEmpty) {
+              WidgetsBinding.instance.addPostFrameCallback((_) => vm.setPay(enabled.first));
+            }
+            final wallet = context.watch<OrdersState>().wallet;
+            Widget optionFor(String key) {
+              switch (key) {
+                case 'knet':
+                  return _PayOption(icon: Icons.credit_card_rounded, label: 'KNET', on: vm.pay == 'knet', onTap: () => vm.setPay('knet'));
+                case 'card':
+                  return _PayOption(icon: Icons.credit_card_rounded, label: 'Card', on: vm.pay == 'card', onTap: () => vm.setPay('card'));
+                case 'wallet':
+                  return _PayOption(icon: Icons.account_balance_wallet_rounded, label: 'Wallet · ${Formatters.money(wallet)}', on: vm.pay == 'wallet', onTap: () => vm.setPay('wallet'));
+                case 'cod':
+                  return _PayOption(icon: Icons.payments_rounded, label: 'Cash on delivery', on: vm.pay == 'cod', onTap: () => vm.setPay('cod'));
+                default:
+                  return const SizedBox.shrink();
+              }
+            }
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Column(children: [for (final key in enabled) optionFor(key)]),
+            );
+          }),
 
           const _HLbl(label: 'Additional notes'),
           Padding(
@@ -158,55 +315,83 @@ class _CheckoutBody extends StatelessWidget {
           const _HLbl(label: 'Promo code'),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: GestureDetector(
-              onTap: () => _openPromoPicker(context, cart, vm),
-              child: Container(
-                padding: const EdgeInsets.all(13),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border.all(color: AppColors.line, width: 1.5),
-                  borderRadius: BorderRadius.circular(13),
+            child: Builder(builder: (context) {
+              final appliedLabel = initData?.appliedCouponCode ?? initData?.appliedPromo?.promoCode;
+              final appliedTitle = initData?.appliedPromo?.title;
+              final discount = initData?.summary.couponDiscount ?? 0;
+              return GestureDetector(
+                onTap: () => _openPromoSheet(
+                  context,
+                  initData,
+                  onInitDataChanged,
+                  subtotal: initData?.summary.subtotal ?? totals.before,
+                  itemCount: initData?.itemCount ?? cart.cartCount,
+                  areaId: a?.areaId,
                 ),
-                child: Row(children: [
-                  const Icon(Icons.sell_outlined, size: 17, color: AppColors.navy),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: totals.promo != null
-                        ? Text.rich(TextSpan(children: [
-                      TextSpan(text: '${totals.promo!.code} ', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5, color: AppColors.ink)),
-                      TextSpan(text: '· ${totals.promo!.labelEn}', style: const TextStyle(color: AppColors.ink, fontSize: 12.5)),
-                    ]))
-                        : const Text('Choose a coupon', style: TextStyle(color: AppColors.ink, fontSize: 12.5)),
+                child: Container(
+                  padding: const EdgeInsets.all(13),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border.all(color: AppColors.line, width: 1.5),
+                    borderRadius: BorderRadius.circular(13),
                   ),
-                  if (totals.promo != null) Text('−${Formatters.money(totals.promoDiscount)}', style: const TextStyle(color: AppColors.rose, fontWeight: FontWeight.w700, fontSize: 13)),
-                  const SizedBox(width: 6),
-                  const Icon(Icons.chevron_right_rounded, color: AppColors.muted, size: 16),
-                ]),
-              ),
-            ),
+                  child: Row(children: [
+                    const Icon(Icons.sell_outlined, size: 17, color: AppColors.navy),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: appliedLabel != null
+                          ? Text.rich(TextSpan(children: [
+                        TextSpan(text: '$appliedLabel ', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5, color: AppColors.ink)),
+                        if (appliedTitle != null) TextSpan(text: '· $appliedTitle', style: const TextStyle(color: AppColors.ink, fontSize: 12.5)),
+                      ]))
+                          : const Text('Enter a promo code', style: TextStyle(color: AppColors.ink, fontSize: 12.5)),
+                    ),
+                    if (appliedLabel != null && discount > 0)
+                      Text('−${Formatters.money(discount)}', style: const TextStyle(color: AppColors.rose, fontWeight: FontWeight.w700, fontSize: 13)),
+                    const SizedBox(width: 6),
+                    const Icon(Icons.chevron_right_rounded, color: AppColors.muted, size: 16),
+                  ]),
+                ),
+              );
+            }),
           ),
 
           const _HLbl(label: 'Order summary'),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: AppColors.shSm),
-              child: Column(
-                children: [
-                  _SumRow(label: 'Subtotal', value: Formatters.money(totals.before)),
-                  if (totals.itemDiscount > 0) _SumRow(label: 'Discount', value: '−${Formatters.money(totals.itemDiscount)}', color: AppColors.rose),
-                  _SumRow(label: 'Delivery fee', value: totals.deliveryFee == 0 ? 'Free' : Formatters.money(totals.deliveryFee)),
-                  if (totals.promo != null) _SumRow(label: 'Promo (${totals.promo!.code})', value: '−${Formatters.money(totals.promoDiscount)}', color: AppColors.rose),
-                  Container(
-                    margin: const EdgeInsets.only(top: 3),
-                    padding: const EdgeInsets.only(top: 11),
-                    decoration: const BoxDecoration(border: Border(top: BorderSide(color: AppColors.line, width: 1))),
-                    child: _SumRow(label: 'Total', value: Formatters.money(totals.due), bold: true),
-                  ),
-                ],
-              ),
-            ),
+            child: Builder(builder: (context) {
+              // Prefers the server's own computed totals (confirmed live
+              // via checkout-init) once loaded — that reflects its actual
+              // promo/delivery-fee logic exactly, rather than the client
+              // trying to replicate it locally. Falls back to local
+              // computation only until that fetch completes (or if it
+              // fails), so the screen isn't blank in the meantime.
+              final summary = initData?.summary;
+              final local = cart.computeTotals();
+              final subtotal = summary?.subtotal ?? local.before;
+              final deliveryFee = summary?.deliveryFee ?? local.deliveryFee;
+              final couponDiscount = summary?.couponDiscount ?? local.promoDiscount;
+              final grandTotal = summary?.grandTotal ?? local.due;
+              final appliedLabel = initData?.appliedCouponCode ?? initData?.appliedPromo?.promoCode;
+              return Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: AppColors.shSm),
+                child: Column(
+                  children: [
+                    _SumRow(label: 'Subtotal', value: Formatters.money(subtotal)),
+                    if (summary == null && local.itemDiscount > 0) _SumRow(label: 'Discount', value: '−${Formatters.money(local.itemDiscount)}', color: AppColors.rose),
+                    _SumRow(label: 'Delivery fee', value: deliveryFee == 0 ? 'Free' : Formatters.money(deliveryFee)),
+                    if (couponDiscount > 0) _SumRow(label: appliedLabel != null ? 'Promo ($appliedLabel)' : 'Promo', value: '−${Formatters.money(couponDiscount)}', color: AppColors.rose),
+                    Container(
+                      margin: const EdgeInsets.only(top: 3),
+                      padding: const EdgeInsets.only(top: 11),
+                      decoration: const BoxDecoration(border: Border(top: BorderSide(color: AppColors.line, width: 1))),
+                      child: _SumRow(label: 'Total', value: Formatters.money(grandTotal), bold: true),
+                    ),
+                  ],
+                ),
+              );
+            }),
           ),
         ],
       ),
@@ -226,15 +411,15 @@ class _CheckoutBody extends StatelessWidget {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
               elevation: 0,
             ),
-            onPressed: () => _placeOrder(context, cart, vm),
-            child: Text('Place order · ${Formatters.money(totals.due)}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+            onPressed: () => _placeOrder(context, cart, vm, initData),
+            child: Text('Place order · ${Formatters.money(initData?.summary.grandTotal ?? totals.due)}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
           ),
         ),
       ),
     );
   }
 
-  Future<void> _placeOrder(BuildContext context, CartState cart, CheckoutViewModel vm) async {
+  Future<void> _placeOrder(BuildContext context, CartState cart, CheckoutViewModel vm, CheckoutInitData? initData) async {
     if (cart.cartCount == 0 && cart.rxCartCount == 0) return;
 
     if (!await requireLogin(context)) return;
@@ -242,18 +427,73 @@ class _CheckoutBody extends StatelessWidget {
 
     final auth = context.read<AuthState>();
     final addressState = context.read<AddressState>();
-    final address = addressState.selected;
+    final address = addressState.effectiveAddress;
     final orders = context.read<OrdersState>();
+    final location = context.read<LocationState>();
     final totals = cart.computeTotals();
+    // Prefer the server's own total (confirmed live via checkout-init) for
+    // the wallet-balance check, same reasoning as the summary display above.
+    final due = initData?.summary.grandTotal ?? totals.due;
 
-    if (vm.pay == 'wallet' && orders.wallet < totals.due) {
+    if (address == null) {
+      showErrorToast(context, 'Please add a delivery address before checking out.');
+      return;
+    }
+    if (vm.pay == 'wallet' && orders.wallet < due) {
       showErrorToast(context, 'Insufficient wallet balance for this order.');
       return;
     }
-    if (address.governorateId == null || address.areaId == null) {
-      showErrorToast(context, 'Please pick your area from the address form before checking out.');
+    // The scenario this is actually meant to catch: the person is trying to
+    // order to their CURRENT location, but it didn't resolve to anywhere in
+    // the delivery-area catalog — NOT simply "no address has valid ids at
+    // all" (checking that alone would miss this case entirely, since
+    // effectiveAddress silently falls back to a SAVED address with
+    // perfectly valid ids, just not the place they're actually standing).
+    // Was previously silent about this exact substitution — the order
+    // would just go out to whichever saved address happened to be
+    // selected, without ever telling the person "hey, we couldn't use
+    // where you actually are."
+    if (addressState.useCurrentLocation && addressState.currentLocationMatchFailed) {
+      final saved = await showAddressFormSheet(context, addressState, -1);
+      if (!context.mounted) return;
+      if (saved == true) {
+        await _placeOrder(context, cart, vm, initData);
+      } else {
+        showErrorToast(context, 'We couldn\'t match your current location — please add or choose a delivery address.');
+      }
       return;
     }
+    if (address.governorateId == null || address.areaId == null) {
+      // Safety net for any other case where the resolved address itself
+      // lacks a real area (shouldn't normally happen for a saved address,
+      // but defends against it rather than silently placing an
+      // unfulfillable order).
+      final saved = await showAddressFormSheet(context, addressState, -1);
+      if (!context.mounted) return;
+      if (saved == true) {
+        await _placeOrder(context, cart, vm, initData);
+      } else {
+        showErrorToast(context, 'Please add a delivery address before checking out.');
+      }
+      return;
+    }
+
+    if (cart.cartTab == 'rx') {
+      await _placeRxOrder(context, cart, vm, auth, address, orders);
+      return;
+    }
+
+    // ✅ Confirmed live in the Postman collection's "Place order" example
+    // (`delivery_date`, `delivery_slot`) — this was being collected by the
+    // ASAP/Scheduled + calendar + slot-time UI above and then never sent
+    // anywhere. For ASAP, defaults to today's date with no slot id (the
+    // confirmed example only shows the Scheduled case — what, if anything,
+    // an ASAP order should send for `delivery_slot` isn't confirmed, so
+    // it's omitted here rather than guessed).
+    final deliveryDateStr = (vm.slot == 'sched' && vm.scheduledDate != null) ? _yyyyMMdd(vm.scheduledDate!) : _yyyyMMdd(DateTime.now());
+    final deliverySlotId = (vm.slot == 'sched' && initData != null && vm.slotTimeIndex < initData.deliverySlots.length)
+        ? initData.deliverySlots[vm.slotTimeIndex].id
+        : null;
 
     // NOT awaited: showDialog()'s Future only resolves once the dialog is
     // popped — awaiting it here would block forever, since nothing pops it
@@ -267,20 +507,53 @@ class _CheckoutBody extends StatelessWidget {
         address: address,
         pay: vm.pay,
         totals: totals,
-        coupon: totals.promo?.code ?? '',
+        coupon: initData?.appliedCouponCode ?? initData?.appliedPromo?.promoCode ?? '',
+        deliveryDate: deliveryDateStr,
+        deliverySlot: deliverySlotId,
+        // Sent alongside the structured address regardless of which saved
+        // address was chosen — the device's actual GPS pin, for the rider.
+        latitude: location.position?.latitude,
+        longitude: location.position?.longitude,
       );
-      // Close the overlay as soon as we have a result — BEFORE the mounted
-      // check below, which used to return early and skip this entirely,
-      // leaving "Placing your order…" stuck on screen forever even though
-      // the order had actually gone through.
       if (context.mounted) hideBusyOverlay(context);
       if (!context.mounted) return;
 
-      if (cart.cartTab == 'rx') {
-        cart.clearRxCart();
-      } else {
-        cart.clearCart();
+      // Matches the native Android app's sequencing exactly (see
+      // `CheckOutActivity.updateStatus` observer): the order is created
+      // FIRST regardless of payment method, and only THEN — if KNET was
+      // chosen — does the Tap `goSellSDK` session start, using the new
+      // order's own code as the reference reported back afterwards. COD
+      // and wallet finish immediately here, same as before.
+      if (vm.pay == 'knet') {
+        final customerName = auth.user?.name.isNotEmpty == true ? auth.user!.name : address.first;
+        final result = await TapPaymentService.instance.payWithKnet(
+          userId: auth.userId!,
+          amount: due,
+          customerFirstName: customerName,
+          customerEmail: auth.user?.email ?? '',
+          customerPhone: address.phone.replaceAll(RegExp(r'\s'), '').replaceFirst(RegExp(r'^(\+?965)'), ''),
+          orderCode: code,
+        );
+        if (!context.mounted) return;
+
+        final reported = await TapPaymentService.instance.reportPaymentResponse(
+          orderCode: code,
+          success: result.success,
+          transactionId: result.chargeId,
+        );
+        if (!context.mounted) return;
+
+        if (!result.success) {
+          showErrorToast(context, result.errorMessage ?? 'KNET payment failed. Your order is saved — you can try paying again from Order details.');
+          return; // stay on checkout; order already exists but isn't marked paid
+        }
+        if (!reported) {
+          showErrorToast(context, 'Payment went through, but we couldn\'t confirm it with the server. Please check Order details.');
+          return;
+        }
       }
+
+      cart.clearCartRemote(auth.userId!);
       showToast(context, 'Order placed! Tracking #$code');
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => TrackScreen(orderId: code)),
@@ -292,153 +565,256 @@ class _CheckoutBody extends StatelessWidget {
     }
   }
 
-  // ── .sh-h/.sh-b/.sh-f — address picker sheet matching openAddrPicker() ──
-  void _openAddressPicker(BuildContext context, AddressState addressState) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
-      builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // .sh-h
-            Container(
-              padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
-              decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.line, width: 1))),
-              child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text('Shipping address', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.navy)),
-                InkWell(onTap: () => Navigator.pop(context), child: const Icon(Icons.close_rounded, size: 20, color: AppColors.muted)),
-              ]),
-            ),
-            // .sh-b — address rows styled like .payopt
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 6, 18, 12),
-              child: Column(children: [
-                for (var i = 0; i < addressState.addresses.length; i++)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 9),
-                    child: GestureDetector(
-                      onTap: () {
-                        addressState.select(i);
-                        Navigator.pop(context);
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.all(13),
-                        decoration: BoxDecoration(
-                          color: addressState.selectedIndex == i ? const Color(0xFFF2FAFE) : Colors.white,
-                          border: Border.all(color: addressState.selectedIndex == i ? AppColors.sky : AppColors.line, width: 1.5),
-                          borderRadius: BorderRadius.circular(13),
-                        ),
-                        child: Row(children: [
-                          const Icon(Icons.location_on_outlined, size: 20, color: AppColors.navy),
-                          const SizedBox(width: 11),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(addressState.addresses[i].title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5, color: AppColors.navy)),
-                                const SizedBox(height: 2),
-                                Text(addressState.addresses[i].formatted, style: const TextStyle(fontSize: 11, color: AppColors.muted)),
-                              ],
-                            ),
-                          ),
-                          Container(
-                            width: 20, height: 20,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(color: addressState.selectedIndex == i ? AppColors.sky : AppColors.line, width: 2),
-                            ),
-                            child: addressState.selectedIndex == i
-                                ? Center(child: Container(width: 12, height: 12, decoration: const BoxDecoration(shape: BoxShape.circle, color: AppColors.sky)))
-                                : null,
-                          ),
-                        ]),
-                      ),
-                    ),
-                  ),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: AppColors.line, width: 1.5),
-                      padding: const EdgeInsets.symmetric(vertical: 13),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _openAddressForm(context, addressState, -1);
-                    },
-                    child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      Icon(Icons.add, size: 16, color: AppColors.navy),
-                      SizedBox(width: 6),
-                      Text('Add new address', style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 13.5)),
-                    ]),
-                  ),
-                ),
-              ]),
-            ),
-          ],
-        ),
-      ),
-    );
+  /// The Rx cart checks out through a completely separate endpoint
+  /// (`POST /app/acct/rx/checkout`) — one prescription at a time, and it
+  /// needs a real *saved* address id, unlike the regular flow above which
+  /// can use a GPS-matched "current location" address. See
+  /// [OrdersState.placeRxOrdersRemote] for why this can mean more than one
+  /// network call for a single tap of "Place order".
+  Future<void> _placeRxOrder(
+    BuildContext context,
+    CartState cart,
+    CheckoutViewModel vm,
+    AuthState auth,
+    Address address,
+    OrdersState orders,
+  ) async {
+    if (address.id == null) {
+      showErrorToast(context, 'Rx checkout needs a saved address — please pick one instead of using your current location.');
+      return;
+    }
+
+    showBusyOverlay(context, message: 'Submitting your prescription order…');
+    try {
+      final results = await orders.placeRxOrdersRemote(
+        userId: auth.userId!,
+        addressId: address.id!,
+        payment: vm.pay,
+        rxCart: cart.rxCart,
+      );
+      if (context.mounted) hideBusyOverlay(context);
+      if (!context.mounted) return;
+
+      final succeeded = results.where((r) => r.success).toList();
+      final failed = results.where((r) => !r.success).toList();
+
+      if (succeeded.isNotEmpty) {
+        // Only clear what actually went through — a line whose prescription
+        // failed to check out should still be sitting in the Rx cart
+        // afterward, not silently dropped.
+        cart.rxCart.removeWhere((_, line) => succeeded.any((r) => r.prescriptionId == line.rxId));
+        cart.notifyListeners();
+      }
+
+      if (failed.isEmpty) {
+        showToast(context, succeeded.length > 1 ? 'Submitted ${succeeded.length} prescription orders' : 'Prescription order submitted');
+        final code = succeeded.first.orderCode;
+        if (code != null) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => TrackScreen(orderId: code)),
+            (route) => route.isFirst,
+          );
+        } else {
+          Navigator.pop(context);
+        }
+      } else if (succeeded.isEmpty) {
+        showErrorToast(context, failed.first.error ?? 'Couldn\'t submit your prescription order.');
+      } else {
+        // Mixed result — some prescriptions checked out, at least one didn't.
+        showToast(context, '${succeeded.length} submitted, ${failed.length} failed — still in your Rx cart');
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (context.mounted) hideBusyOverlay(context);
+      if (context.mounted) showErrorToast(context, describeError(e));
+    }
   }
 
-  // ── .sh-h/.sh-b — promo picker sheet matching openPromo() ──
-  void _openPromoPicker(BuildContext context, CartState cart, CheckoutViewModel vm) {
-    final totals = cart.computeTotals();
+
+  // ── Real promo sheet — replaces the old picker that just chose among a
+  // hardcoded, entirely client-side "promos" list with no backend
+  // involvement at all. Now backed by checkout-init's real `promotions`
+  // list and the real apply/remove endpoints. ──
+  void _openPromoSheet(
+    BuildContext context,
+    CheckoutInitData? initData,
+    ValueChanged<CheckoutInitData> onChanged, {
+    required double subtotal,
+    required int itemCount,
+    int? areaId,
+  }) {
+    final auth = context.read<AuthState>();
+    final userId = auth.userId;
+    final currentCode = initData?.appliedCouponCode ?? initData?.appliedPromo?.promoCode ?? '';
+    final controller = TextEditingController(text: currentCode);
+    final active = (initData?.promotions ?? const <Promotion>[]).where((p) => p.isActive).toList();
+    final hasApplied = (initData?.appliedCouponCode != null) || (initData?.appliedPromo != null);
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
-      builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
-              decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.line, width: 1))),
-              child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text('Choose a coupon', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.navy)),
-                InkWell(onTap: () => Navigator.pop(context), child: const Icon(Icons.close_rounded, size: 20, color: AppColors.muted)),
-              ]),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 6, 18, 16),
-              child: Column(children: [
-                for (final p in CatalogRepository.instance.promos)
-                  _PromoOptRow(
-                    code: p.code,
-                    labelText: p.labelEn,
-                    eligible: totals.subtotal >= p.min,
-                    isCurrent: totals.promo?.code == p.code,
-                    minSpendText: 'Min spend ${Formatters.money(p.min)}',
-                    saveText: totals.subtotal >= p.min ? '−${Formatters.money(p.savings(totals.subtotal, totals.deliveryFee))}' : null,
-                    onTap: totals.subtotal >= p.min
-                        ? () {
-                      cart.selectedPromoCode = p.code;
-                      cart.notifyListeners();
-                      Navigator.pop(context);
-                    }
-                        : null,
+      builder: (sheetContext) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(sheetContext).viewInsets.bottom),
+        child: StatefulBuilder(builder: (sheetContext, setSheetState) {
+          bool checking = false;
+          String? error;
+
+          // Apply/remove only return {success, message, ...} — not the
+          // updated cart/totals — so a successful one needs a follow-up
+          // full re-fetch to actually refresh what's on screen.
+          Future<void> refreshAfterChange() async {
+            if (userId == null) return;
+            final fresh = await AccountService.instance.checkoutInit(userId);
+            onChanged(fresh);
+          }
+
+          Future<void> applyCode(String code) async {
+            if (userId == null || code.isEmpty) return;
+            setSheetState(() { checking = true; error = null; });
+            try {
+              final result = await AccountService.instance.applyPromoCode(userId, code, subtotal: subtotal);
+              if (!result.success) {
+                setSheetState(() { checking = false; error = result.message ?? 'That code isn\'t valid for this order.'; });
+                return;
+              }
+              await refreshAfterChange();
+              if (sheetContext.mounted) Navigator.pop(sheetContext);
+            } catch (e) {
+              setSheetState(() { checking = false; error = describeError(e); });
+            }
+          }
+
+          Future<void> applyPromotion(Promotion promo) async {
+            if (userId == null) return;
+            if (promo.requiresCode && promo.promoCode != null) {
+              await applyCode(promo.promoCode!);
+              return;
+            }
+            setSheetState(() { checking = true; error = null; });
+            try {
+              final result = await AccountService.instance.applyPromotion(userId, promo.id, subtotal: subtotal, itemCount: itemCount, areaId: areaId);
+              if (!result.success) {
+                setSheetState(() { checking = false; error = result.message ?? 'Couldn\'t apply that offer.'; });
+                return;
+              }
+              await refreshAfterChange();
+              if (sheetContext.mounted) Navigator.pop(sheetContext);
+            } catch (e) {
+              setSheetState(() { checking = false; error = describeError(e); });
+            }
+          }
+
+          Future<void> remove() async {
+            if (userId == null) return;
+            setSheetState(() { checking = true; error = null; });
+            try {
+              final currentCode = initData?.appliedCouponCode ?? initData?.appliedPromo?.promoCode ?? '';
+              final result = await AccountService.instance.removePromotion(userId, code: currentCode, subtotal: subtotal);
+              if (!result.success) {
+                setSheetState(() { checking = false; error = result.message ?? 'Couldn\'t remove that offer.'; });
+                return;
+              }
+              await refreshAfterChange();
+              if (sheetContext.mounted) Navigator.pop(sheetContext);
+            } catch (e) {
+              setSheetState(() { checking = false; error = describeError(e); });
+            }
+          }
+
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                    const Text('Promo code', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.navy)),
+                    InkWell(onTap: () => Navigator.pop(sheetContext), child: const Icon(Icons.close_rounded, size: 20, color: AppColors.muted)),
+                  ]),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: controller,
+                    textCapitalization: TextCapitalization.characters,
+                    decoration: InputDecoration(
+                      hintText: 'Enter code',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      errorText: error,
+                    ),
                   ),
-                _PromoOptRow(
-                  code: 'No coupon',
-                  labelText: null,
-                  eligible: true,
-                  isCurrent: cart.selectedPromoCode == '__none__',
-                  minSpendText: null,
-                  saveText: null,
-                  onTap: () {
-                    cart.selectedPromoCode = '__none__';
-                    cart.notifyListeners();
-                    Navigator.pop(context);
-                  },
-                ),
-              ]),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: AppColors.navy, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 13)),
+                      onPressed: checking ? null : () => applyCode(controller.text.trim()),
+                      child: Text(checking ? 'Applying…' : 'Apply'),
+                    ),
+                  ),
+                  if (hasApplied)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton(
+                          onPressed: checking ? null : remove,
+                          child: const Text('Remove applied code'),
+                        ),
+                      ),
+                    ),
+                  // Real offers from checkout-init — a promotion with its
+                  // own code fills the field above and applies it; one
+                  // without a code (condition-based, e.g. "min 3 items")
+                  // applies directly by its id via /app/promotion/apply.
+                  if (active.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    const Text('Available offers', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.navy)),
+                    const SizedBox(height: 8),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 220),
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: active.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (_, i) {
+                          final promo = active[i];
+                          final desc = promo.offerType == 'percent'
+                              ? '${promo.offerValue.toStringAsFixed(0)}% off'
+                              : Formatters.money(promo.offerValue) + ' off';
+                          return GestureDetector(
+                            onTap: checking ? null : () => applyPromotion(promo),
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(11)),
+                              child: Row(children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(promo.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5, color: AppColors.navy)),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        promo.requiresCode ? '$desc · code ${promo.promoCode}' : desc,
+                                        style: const TextStyle(fontSize: 11, color: AppColors.muted),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const Icon(Icons.chevron_right_rounded, size: 16, color: AppColors.muted),
+                              ]),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
-          ],
-        ),
+          );
+        }),
       ),
     );
   }
@@ -634,78 +1010,6 @@ class _PayOption extends StatelessWidget {
   }
 }
 
-class _PromoOptRow extends StatelessWidget {
-  final String code;
-  final String? labelText;
-  final bool eligible;
-  final bool isCurrent;
-  final String? minSpendText;
-  final String? saveText;
-  final VoidCallback? onTap;
-  const _PromoOptRow({
-    required this.code,
-    required this.labelText,
-    required this.eligible,
-    required this.isCurrent,
-    required this.minSpendText,
-    required this.saveText,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Opacity(
-      opacity: eligible ? 1 : 0.5,
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 9),
-        child: GestureDetector(
-          onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.all(13),
-            decoration: BoxDecoration(
-              color: isCurrent ? const Color(0xFFF2FAFE) : Colors.white,
-              border: Border.all(color: isCurrent ? AppColors.sky : AppColors.line, width: 1.5),
-              borderRadius: BorderRadius.circular(13),
-            ),
-            child: Row(children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(code, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5, color: AppColors.navy)),
-                    if (labelText != null) ...[
-                      const SizedBox(height: 2),
-                      Text(labelText!, style: const TextStyle(fontSize: 11, color: AppColors.muted)),
-                    ],
-                    if (!eligible && minSpendText != null) ...[
-                      const SizedBox(height: 2),
-                      Text(minSpendText!, style: const TextStyle(fontSize: 10, color: AppColors.warn)),
-                    ],
-                  ],
-                ),
-              ),
-              if (saveText != null) ...[
-                Text(saveText!, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.rose)),
-                const SizedBox(width: 9),
-              ],
-              Container(
-                width: 20, height: 20,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: isCurrent ? AppColors.sky : AppColors.line, width: 2),
-                ),
-                child: isCurrent
-                    ? Center(child: Container(width: 12, height: 12, decoration: const BoxDecoration(shape: BoxShape.circle, color: AppColors.sky)))
-                    : null,
-              ),
-            ]),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _SumRow extends StatelessWidget {
   final String label;
   final String value;
@@ -724,382 +1028,7 @@ class _SumRow extends StatelessWidget {
   }
 }
 
-// ── .sh-h/.afield/.arow/.sh-f — address form sheet matching openAddrForm() ──
-void _openAddressForm(BuildContext context, AddressState addressState, int index) {
-  showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.white,
-    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
-    builder: (_) => _AddressFormSheet(addressState: addressState, index: index),
-  );
-}
-
-class _AddressFormSheet extends StatefulWidget {
-  final AddressState addressState;
-  final int index; // -1 = add new
-  const _AddressFormSheet({required this.addressState, required this.index});
-
-  @override
-  State<_AddressFormSheet> createState() => _AddressFormSheetState();
-}
-
-class _AddressFormSheetState extends State<_AddressFormSheet> {
-  static const titles = ['Home/Apartment', 'Work', 'Other'];
-
-  late String _title;
-  int? _govId;
-  int? _areaId;
-  late final TextEditingController _first;
-  late final TextEditingController _last;
-  late final TextEditingController _email;
-  late final TextEditingController _phone;
-  late final TextEditingController _alt;
-  late final TextEditingController _block;
-  late final TextEditingController _street;
-  late final TextEditingController _building;
-  late final TextEditingController _apt;
-  late final TextEditingController _floor;
-  bool _saving = false;
-
-  bool get _isEdit => widget.index >= 0;
-
-  @override
-  void initState() {
-    super.initState();
-    final existing = _isEdit ? widget.addressState.addresses[widget.index] : null;
-    _title = titles.contains(existing?.title) ? existing!.title : titles.first;
-    _govId = existing?.governorateId;
-    _areaId = existing?.areaId;
-    _first = TextEditingController(text: existing?.first ?? '');
-    _last = TextEditingController(text: existing?.last ?? '');
-    _email = TextEditingController(text: existing?.email ?? '');
-    _phone = TextEditingController(text: existing?.phone ?? '');
-    _alt = TextEditingController(text: existing?.alt ?? '');
-    _block = TextEditingController(text: existing?.block ?? '');
-    _street = TextEditingController(text: existing?.street ?? '');
-    _building = TextEditingController(text: existing?.building ?? '');
-    _apt = TextEditingController(text: existing?.apt ?? '');
-    _floor = TextEditingController(text: existing?.floor ?? '');
-    if (widget.addressState.areaCatalog.governorates.isEmpty) {
-      widget.addressState.loadAreas().then((_) => _autofillFromLocation());
-    } else {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _autofillFromLocation());
-    }
-  }
-
-  /// New addresses only — same best-effort name match against `/areas` as
-  /// the standalone address form screen.
-  void _autofillFromLocation() {
-    if (!mounted || _isEdit) return;
-    final location = context.read<LocationState>();
-    if (!location.isReady) return;
-
-    String norm(String s) => s.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
-    final govGuess = location.governorate;
-    final areaGuess = location.area;
-    if (govGuess == null && areaGuess == null) return;
-
-    for (final g in widget.addressState.areaCatalog.governorates) {
-      final govMatches = govGuess != null && (norm(g.name).contains(norm(govGuess)) || norm(govGuess).contains(norm(g.name)));
-      for (final a in g.areas) {
-        final areaMatches = areaGuess != null && (norm(a.name).contains(norm(areaGuess)) || norm(areaGuess).contains(norm(a.name)));
-        if (areaMatches || (govMatches && areaGuess == null)) {
-          setState(() {
-            _govId = g.id;
-            _areaId = a.id;
-            if (location.street != null && location.street!.isNotEmpty && _street.text.isEmpty) _street.text = location.street!;
-          });
-          return;
-        }
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _first.dispose();
-    _last.dispose();
-    _email.dispose();
-    _phone.dispose();
-    _alt.dispose();
-    _block.dispose();
-    _street.dispose();
-    _building.dispose();
-    _apt.dispose();
-    _floor.dispose();
-    super.dispose();
-  }
-
-  Future<void> _save() async {
-    if (_govId == null || _areaId == null) {
-      showErrorToast(context, 'Please choose your governorate and area.');
-      return;
-    }
-    if (!await requireLogin(context)) return;
-    if (!mounted) return;
-
-    final address = Address(
-      id: _isEdit ? widget.addressState.addresses[widget.index].id : null,
-      title: _title,
-      first: _first.text,
-      last: _last.text,
-      email: _email.text,
-      phone: _phone.text,
-      alt: _alt.text,
-      governorateId: _govId,
-      areaId: _areaId,
-      block: _block.text,
-      street: _street.text,
-      building: _building.text,
-      apt: _apt.text,
-      floor: _floor.text,
-    );
-
-    setState(() => _saving = true);
-    try {
-      final auth = context.read<AuthState>();
-      await widget.addressState.saveRemote(auth.userId!, address, index: _isEdit ? widget.index : null);
-      if (!mounted) return;
-      Navigator.pop(context);
-      showToast(context, 'Address saved');
-    } catch (e) {
-      if (!mounted) return;
-      showErrorToast(context, describeError(e));
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // .sh-h
-            Container(
-              padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
-              decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.line, width: 1))),
-              child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                Text(_isEdit ? 'Edit address' : 'Add new address', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.navy)),
-                InkWell(onTap: () => Navigator.pop(context), child: const Icon(Icons.close_rounded, size: 20, color: AppColors.muted)),
-              ]),
-            ),
-            // .sh-b — scrollable field list
-            ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.6),
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(18, 6, 18, 12),
-                child: Column(children: [
-                  _AField(
-                    label: 'Title',
-                    required: true,
-                    child: _ADropdown(value: _title, options: titles, onChanged: (v) => setState(() => _title = v)),
-                  ),
-                  _ARow(children: [
-                    _AField(label: 'First name', required: true, child: _AInput(controller: _first)),
-                    _AField(label: 'Last name', required: true, child: _AInput(controller: _last)),
-                  ]),
-                  _AField(label: 'Email', required: true, child: _AInput(controller: _email, keyboard: TextInputType.emailAddress)),
-                  _ARow(children: [
-                    SizedBox(
-                      width: 64,
-                      child: _AField(label: 'Phone', required: true, child: _AInput(controller: TextEditingController(text: '+965'), readOnly: true)),
-                    ),
-                    Expanded(
-                      child: _AField(label: '\u00A0', required: false, child: _AInput(controller: _phone, hint: 'Enter phone number', keyboard: TextInputType.phone)),
-                    ),
-                  ]),
-                  _ARow(children: [
-                    SizedBox(
-                      width: 64,
-                      child: _AField(label: 'Alt. phone', required: false, child: _AInput(controller: TextEditingController(text: '+965'), readOnly: true)),
-                    ),
-                    Expanded(
-                      child: _AField(label: '\u00A0', required: false, child: _AInput(controller: _alt, keyboard: TextInputType.phone)),
-                    ),
-                  ]),
-                  _AField(
-                    label: 'Governorate',
-                    required: true,
-                    child: _AreaIdDropdown(
-                      value: _govId,
-                      hint: 'Select governorate',
-                      options: [for (final g in widget.addressState.areaCatalog.governorates) (id: g.id, label: g.name)],
-                      onChanged: (v) => setState(() { _govId = v; _areaId = null; }),
-                    ),
-                  ),
-                  _AField(
-                    label: 'Area',
-                    required: true,
-                    child: _AreaIdDropdown(
-                      value: _areaId,
-                      hint: 'Select area',
-                      options: [
-                        for (final g in widget.addressState.areaCatalog.governorates)
-                          if (g.id == _govId)
-                            for (final a in g.areas) (id: a.id, label: a.name),
-                      ],
-                      onChanged: (v) => setState(() => _areaId = v),
-                    ),
-                  ),
-                  _ARow(children: [
-                    _AField(label: 'Block', required: true, child: _AInput(controller: _block)),
-                    _AField(label: 'Street name', required: true, child: _AInput(controller: _street)),
-                  ]),
-                  _ARow(children: [
-                    _AField(label: 'Building', required: true, child: _AInput(controller: _building)),
-                    _AField(label: 'Apartment', required: false, child: _AInput(controller: _apt)),
-                  ]),
-                  _AField(label: 'Floor', required: false, child: _AInput(controller: _floor)),
-                ]),
-              ),
-            ),
-            // .sh-f
-            Container(
-              padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-              decoration: const BoxDecoration(border: Border(top: BorderSide(color: AppColors.line, width: 1))),
-              child: SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.navy,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
-                    elevation: 0,
-                  ),
-                  onPressed: _saving ? null : _save,
-                  child: _saving
-                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white))
-                      : Text(_isEdit ? 'Save address' : 'Add address', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── .afield — label + input/dropdown wrapper ──
-class _AField extends StatelessWidget {
-  final String label;
-  final bool required;
-  final Widget child;
-  const _AField({required this.label, required this.required, required this.child});
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 11),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(required ? '$label *' : label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.navy)),
-        const SizedBox(height: 5),
-        child,
-      ]),
-    );
-  }
-}
-
-// ── .arow — two fields side by side with 10px gap ──
-class _ARow extends StatelessWidget {
-  final List<Widget> children;
-  const _ARow({required this.children});
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (var i = 0; i < children.length; i++) ...[
-          if (children[i] is _AField) Expanded(child: children[i]) else children[i],
-          if (i != children.length - 1) const SizedBox(width: 10),
-        ],
-      ],
-    );
-  }
-}
-
-// ── .afield input ──
-class _AInput extends StatelessWidget {
-  final TextEditingController controller;
-  final String? hint;
-  final bool readOnly;
-  final TextInputType? keyboard;
-  const _AInput({required this.controller, this.hint, this.readOnly = false, this.keyboard});
-  @override
-  Widget build(BuildContext context) {
-    return TextField(
-      controller: controller,
-      readOnly: readOnly,
-      keyboardType: keyboard,
-      textAlign: readOnly ? TextAlign.center : TextAlign.start,
-      style: TextStyle(fontSize: 13.5, color: readOnly ? AppColors.muted : AppColors.ink),
-      decoration: InputDecoration(
-        isDense: true,
-        filled: true,
-        fillColor: readOnly ? AppColors.bg : Colors.white,
-        hintText: hint,
-        hintStyle: const TextStyle(color: AppColors.muted, fontSize: 13.5),
-        contentPadding: const EdgeInsets.all(11),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.line, width: 1.5)),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.line, width: 1.5)),
-        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.sky, width: 1.5)),
-      ),
-    );
-  }
-}
-
-// ── governorate/area select (id-based, from the /areas API) ──
-class _AreaIdDropdown extends StatelessWidget {
-  final int? value;
-  final String? hint;
-  final List<({int id, String label})> options;
-  final ValueChanged<int?> onChanged;
-  const _AreaIdDropdown({required this.value, this.hint, required this.options, required this.onChanged});
-  @override
-  Widget build(BuildContext context) {
-    final validValue = options.any((o) => o.id == value) ? value : null;
-    return DropdownButtonFormField<int>(
-      value: validValue,
-      hint: hint != null ? Text(hint!, style: const TextStyle(color: AppColors.muted, fontSize: 13.5)) : null,
-      items: options.map((o) => DropdownMenuItem(value: o.id, child: Text(o.label, style: const TextStyle(fontSize: 13.5, color: AppColors.ink)))).toList(),
-      onChanged: options.isEmpty ? null : onChanged,
-      decoration: InputDecoration(
-        isDense: true,
-        filled: true,
-        fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 11, vertical: 11),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.line, width: 1.5)),
-      ),
-    );
-  }
-}
-
-// ── .afield select ──
-class _ADropdown extends StatelessWidget {
-  final String? value;
-  final String? hint;
-  final List<String> options;
-  final ValueChanged<String> onChanged;
-  const _ADropdown({required this.value, this.hint, required this.options, required this.onChanged});
-  @override
-  Widget build(BuildContext context) {
-    return DropdownButtonFormField<String>(
-      value: value != null && options.contains(value) ? value : null,
-      hint: hint != null ? Text(hint!, style: const TextStyle(color: AppColors.muted, fontSize: 13.5)) : null,
-      items: options.map((o) => DropdownMenuItem(value: o, child: Text(o, style: const TextStyle(fontSize: 13.5, color: AppColors.ink)))).toList(),
-      onChanged: (v) { if (v != null) onChanged(v); },
-      decoration: InputDecoration(
-        isDense: true,
-        filled: true,
-        fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 11, vertical: 11),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.line, width: 1.5)),
-      ),
-    );
-  }
-}
+/// Formats a [DateTime] as `yyyy-MM-dd` for the `delivery_date` field —
+/// confirmed live in the Postman collection's "Place order" example.
+String _yyyyMMdd(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';

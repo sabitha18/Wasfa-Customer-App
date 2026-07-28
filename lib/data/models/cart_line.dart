@@ -16,6 +16,12 @@ class CartLine {
   final String? nameOverride; // RX item display name when productId is null
   final String? nameOverrideAr;
   final String? emojiOverride;
+  /// The server's own id for this cart line — confirmed needed by
+  /// `POST /app/cart/remove` (`cart_id`, not `product_id`). Null until
+  /// either a successful `/app/cart/add` response supplies one or a
+  /// `/app/cart` sync does — both response shapes are unconfirmed, so this
+  /// stays best-effort (see CartService).
+  int? serverCartId;
 
   CartLine({
     required this.key,
@@ -29,6 +35,7 @@ class CartLine {
     this.nameOverride,
     this.nameOverrideAr,
     this.emojiOverride,
+    this.serverCartId,
   });
 
   double get lineTotalBeforeDiscount => (was ?? price) * qty;

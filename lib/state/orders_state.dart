@@ -15,53 +15,37 @@ class OrdersState extends ChangeNotifier {
   final AccountService _accountService = AccountService.instance;
   final CatalogService _catalogService = CatalogService.instance;
 
-  /// Seeded with a couple of demo orders so the Orders screen isn't blank
-  /// before the first `/my-orders` fetch — replaced wholesale by [loadMyOrders].
-  final List<Order> orders = [
-    Order(
-      id: 'APM30995',
-      ts: DateTime.now().subtract(const Duration(days: 1)),
-      total: 5.700,
-      pay: 'knet',
-      status: 'done',
-      groups: [
-        OrderGroup(pharmacy: 'Royal Pharmacy', items: const [
-          OrderItemLine(productId: 1, qty: 2, price: 1.250),
-          OrderItemLine(productId: 2, qty: 1, price: 3.200),
-        ]),
-      ],
-    ),
-    Order(
-      id: 'APM31402',
-      ts: DateTime.now().subtract(const Duration(hours: 2)),
-      total: 5.050,
-      pay: 'wallet',
-      status: 'prep',
-      groups: [
-        OrderGroup(pharmacy: 'City Pharmacy', items: const [
-          OrderItemLine(productId: 2, qty: 1, price: 3.350),
-          OrderItemLine(productId: 1, qty: 1, price: 1.350),
-        ]),
-      ],
-    ),
-  ];
+  /// Populated by [loadMyOrders] — starts empty, no mock/dummy data.
+  final List<Order> orders = [];
 
   bool ordersLoading = false;
   String? ordersError;
 
   bool walletLoading = false;
   String? walletError;
-  double wallet = 12.500;
+  double wallet = 0;
   double walletCredited = 0;
   double walletUsed = 0;
-  int rewards = 120;
+  /// UNCONFIRMED — there is no rewards/points field anywhere in
+  /// `GET /acct/wallet`'s confirmed response shape (`balance`, `credited`,
+  /// `used`, `tx[]` only). This used to be hardcoded to a fake `120` and
+  /// never actually synced from anything real. Left at 0 (honest empty
+  /// state) until backend adds a real field for this — ask them whether
+  /// rewards/loyalty points are even a planned feature before building UI
+  /// around a made-up number again.
+  int rewards = 0;
   String? trackingOrderId;
 
-  List<WalletTransaction> transactions = const [
-    WalletTransaction(label: 'Refund · Order APM30995', labelAr: 'استرداد · طلب APM30995', amount: 0.750, dateDisplay: 'Jun 18'),
-    WalletTransaction(label: 'Reward · Welcome bonus', labelAr: 'مكافأة · هدية الترحيب', amount: 5.000, dateDisplay: 'Jun 10'),
-    WalletTransaction(label: 'Top-up · KNET', labelAr: 'شحن · كي نت', amount: 10.000, dateDisplay: 'Jun 5'),
-  ];
+  /// Populated by [loadWallet] — starts empty, no mock/dummy data.
+  List<WalletTransaction> transactions = const [];
+
+  /// Updates just the balance from another source that already fetched it
+  /// (the checkout-init endpoint returns this too) — doesn't touch
+  /// credited/used/transactions, which only [loadWallet] itself knows.
+  void syncWalletBalance(double balance) {
+    wallet = balance;
+    notifyListeners();
+  }
 
   Order? byId(String id) {
     try {
@@ -71,8 +55,28 @@ class OrdersState extends ChangeNotifier {
     }
   }
 
+  /// Cancel/return requests and ratings (see [startRequest]/[rateOrder]) are
+  /// tracked entirely client-side — there's no `/orders` endpoint yet that
+  /// accepts or echoes them back, so [Order.fromJson] never sets them. That
+  /// means any raw re-fetch (`loadMyOrders`, `loadOrderDetail`) was replacing
+  /// the whole [Order] object and silently wiping them out: submit a
+  /// cancellation, then simply open that order's detail screen again (which
+  /// re-fetches it), and the request would vanish. This carries those
+  /// fields forward from whatever's already in [orders] onto the freshly
+  /// fetched copy before it replaces the old one.
+  Order _preserveLocalState(Order fresh) {
+    final prev = byId(fresh.id);
+    if (prev != null) {
+      fresh.cancelRequests = prev.cancelRequests;
+      fresh.returnRequests = prev.returnRequests;
+      fresh.rating = prev.rating;
+      fresh.review = prev.review;
+    }
+    return fresh;
+  }
+
   int get pendingRequestCount => orders
-      .where((o) => (o.cancelRequest?.status == 'pending') || (o.returnRequest?.status == 'pending'))
+      .where((o) => o.cancelRequests.any((r) => r.status == 'pending') || o.returnRequests.any((r) => r.status == 'pending'))
       .length;
 
   // -------------------------------------------------------------- fetching
@@ -82,9 +86,10 @@ class OrdersState extends ChangeNotifier {
     notifyListeners();
     try {
       final fetched = await _orderService.myOrders(userId);
+      final merged = fetched.map(_preserveLocalState).toList();
       orders
         ..clear()
-        ..addAll(fetched);
+        ..addAll(merged);
     } catch (e) {
       ordersError = describeError(e);
     } finally {
@@ -98,7 +103,7 @@ class OrdersState extends ChangeNotifier {
   /// endpoint — this is what backs the Order Detail screen).
   Future<Order?> loadOrderDetail({required String code, required int userId}) async {
     try {
-      final detail = await _orderService.orderDetail(code: code, userId: userId);
+      final detail = _preserveLocalState(await _orderService.orderDetail(code: code, userId: userId));
       final idx = orders.indexWhere((o) => o.id == code);
       if (idx >= 0) {
         orders[idx] = detail;
@@ -143,13 +148,13 @@ class OrdersState extends ChangeNotifier {
   /// it. Throws [ApiException.business] naming the specific item if it
   /// truly can't be resolved, so the checkout screen can show exactly what
   /// to remove rather than a generic failure.
-  Future<Map<String, dynamic>> _resolveOrderItem(CartLine line) async {
+  Future<Map<String, dynamic>> _resolveOrderItem(CartLine line, {int? userId}) async {
     var apiId = line.apiProductId;
     if (apiId == null && line.productId != null) {
       final cached = CatalogRepository.instance.findProduct(line.productId!);
-      if (cached != null && cached.sku.isNotEmpty) {
+      if (cached != null && cached.pdpIdentifier.isNotEmpty) {
         try {
-          final fresh = await _catalogService.product(cached.sku);
+          final fresh = await _catalogService.product(cached.pdpIdentifier, userId: userId);
           CatalogRepository.instance.cacheProducts([fresh]);
           final matchingSeller = fresh.sellers.where((s) => s.name == line.seller).toList();
           final chosen = matchingSeller.isNotEmpty
@@ -177,13 +182,17 @@ class OrdersState extends ChangeNotifier {
     required String pay, // cod | knet | wallet
     required CheckoutTotals totals,
     String coupon = '',
+    String? deliveryDate,
+    int? deliverySlot,
+    double? latitude,
+    double? longitude,
   }) async {
     // Resolved concurrently rather than one at a time — with several items
     // each needing their own PDP lookup, resolving them sequentially could
     // take a very long time (each with its own network round-trip), making
     // the checkout spinner sit for a long time before anything visibly happens.
     final allLines = totals.groups.values.expand((g) => g).toList();
-    final items = await Future.wait(allLines.map(_resolveOrderItem));
+    final items = await Future.wait(allLines.map((line) => _resolveOrderItem(line, userId: userId)));
     final result = await _orderService.placeOrder(
       userId: userId,
       customerName: customerName,
@@ -193,6 +202,10 @@ class OrdersState extends ChangeNotifier {
       walletRedeem: pay == 'wallet',
       coupon: coupon,
       items: items,
+      deliveryDate: deliveryDate,
+      deliverySlot: deliverySlot,
+      latitude: latitude,
+      longitude: longitude,
     );
     final groups = totals.groups.entries
         .map((e) => OrderGroup(
@@ -209,6 +222,48 @@ class OrdersState extends ChangeNotifier {
     return result.code;
   }
 
+  /// Checks out the Rx cart via `POST /app/acct/rx/checkout` — a completely
+  /// separate flow from [placeOrderRemote]/`/orders`. That endpoint takes
+  /// ONE `prescription_id` at a time (plus `address_id`/`payment`), not an
+  /// itemized cart body, so a person with items from more than one
+  /// prescription in their Rx cart needs one call per prescription — this
+  /// groups [rxCart] by [CartLine.rxId] and does exactly that, sequentially
+  /// (not parallel, so a mid-way failure leaves it obvious which
+  /// prescriptions actually went through vs which didn't, rather than a
+  /// jumble of concurrent results).
+  ///
+  /// Returns one result per prescription attempted, in order, so the caller
+  /// can show a clear "some of these didn't go through" message rather than
+  /// only ever seeing the first result.
+  Future<List<RxCheckoutResult>> placeRxOrdersRemote({
+    required int userId,
+    required int addressId,
+    required String payment,
+    required Map<String, CartLine> rxCart,
+  }) async {
+    final byRx = <String, List<CartLine>>{};
+    for (final line in rxCart.values) {
+      final rxId = line.rxId;
+      if (rxId == null) continue;
+      byRx.putIfAbsent(rxId, () => []).add(line);
+    }
+
+    final results = <RxCheckoutResult>[];
+    for (final rxId in byRx.keys) {
+      try {
+        final code = await _accountService.rxCheckout(userId, rxId, addressId, payment);
+        results.add(RxCheckoutResult(prescriptionId: rxId, orderCode: code, success: true));
+      } catch (e) {
+        results.add(RxCheckoutResult(prescriptionId: rxId, error: describeError(e), success: false));
+      }
+    }
+    if (results.any((r) => r.success)) {
+      trackingOrderId = results.firstWhere((r) => r.success).orderCode;
+    }
+    notifyListeners();
+    return results;
+  }
+
   /// Re-adds a completed order's line items to the shopping cart. Returns how
   /// many lines were added vs. skipped so the caller can toast honestly (an
   /// item is skipped when it carries no backend product id and therefore can't
@@ -220,6 +275,14 @@ class OrdersState extends ChangeNotifier {
     var skipped = 0;
     for (final g in o.groups) {
       for (final it in g.items) {
+        // Restricted items can never be added to cart — pickup only. Was
+        // previously not checked here at all, so "Reorder" would happily
+        // re-add a restricted item, silently contradicting the same rule
+        // already enforced for Rx items (see RequestFlowScreen/_addItem).
+        if (it.restricted) {
+          skipped++;
+          continue;
+        }
         // An order line's `product_id` is the *seller* product id — exactly
         // what checkout must send as `items[].id`. Without it the line can't
         // be re-ordered, so skip it rather than adding a dead cart entry.
@@ -256,24 +319,62 @@ class OrdersState extends ChangeNotifier {
     return (added: added, skipped: skipped);
   }
 
-  void startRequest(String orderId, String type, {required String reason, String note = ''}) {
+  /// ✅ Now calls the real `/orders/{code}/cancel` or `/return` endpoint
+  /// (confirmed live in the updated Postman collection) — this used to
+  /// only touch local state, so nothing ever reached the server at all.
+  /// [detailIds] should come from each item's [OrderItemLine.detailId],
+  /// not a product id — that's a different field the backend also expects.
+  Future<void> startRequest(
+    String orderId,
+    String type, {
+    required int userId,
+    required int reasonId,
+    required String reasonLabel,
+    String note = '',
+    List<OrderItemLine> items = const [],
+    Map<int, int>? qtyByDetailId,
+    String? imagePath,
+  }) async {
     final o = byId(orderId);
     if (o == null) return;
-    final req = OrderRequest(status: 'pending', reason: reason, note: note);
+    final detailIds = items.map((it) => it.detailId).whereType<int>().toList();
     if (type == 'return') {
-      o.returnRequest = req;
+      await _orderService.returnOrder(code: orderId, userId: userId, reasonId: reasonId, note: note, detailIds: detailIds, qtyByDetailId: qtyByDetailId, imagePath: imagePath);
     } else {
-      o.cancelRequest = req;
+      await _orderService.cancelOrder(code: orderId, userId: userId, reasonId: reasonId, note: note, detailIds: detailIds, qtyByDetailId: qtyByDetailId);
+    }
+    final req = OrderRequest(status: 'pending', reasonId: reasonId, reason: reasonLabel, note: note, items: items);
+    if (type == 'return') {
+      o.returnRequests = [...o.returnRequests, req];
+    } else {
+      o.cancelRequests = [...o.cancelRequests, req];
     }
     notifyListeners();
   }
 
-  void rateOrder(String orderId, int stars, {String review = ''}) {
+  /// ✅ Now calls the real `/orders/{code}/rate` endpoint (confirmed live) —
+  /// previously only set the rating/review on local state.
+  Future<void> rateOrder(String orderId, int stars, {required int userId, String review = ''}) async {
     final o = byId(orderId);
     if (o == null) return;
+    await _orderService.rateOrder(code: orderId, userId: userId, rating: stars, review: review);
     o.rating = stars;
     o.review = review;
     notifyListeners();
+  }
+
+  /// `GET /acct/my-requests` — the real, server-side list of every
+  /// cancel/return request across all orders. Replaces deriving this
+  /// purely from whatever's cached in [orders] locally, which only ever
+  /// reflected requests made in the current app session.
+  Future<List<({String orderCode, String type, OrderRequest request})>> fetchMyRequests(int userId) {
+    return _orderService.myRequests(userId);
+  }
+
+  /// `GET /return-reasons?type=cancel|return` — real reason list with ids,
+  /// replacing the hardcoded reason strings the request flow used before.
+  Future<List<Reason>> fetchReturnReasons(String type) {
+    return _orderService.returnReasons(type);
   }
 
   void topUp(double amount) {
@@ -285,4 +386,13 @@ class OrdersState extends ChangeNotifier {
     trackingOrderId = id;
     notifyListeners();
   }
+}
+
+/// Result of checking out one prescription via [OrdersState.placeRxOrdersRemote].
+class RxCheckoutResult {
+  final String prescriptionId;
+  final String? orderCode;
+  final String? error;
+  final bool success;
+  const RxCheckoutResult({required this.prescriptionId, this.orderCode, this.error, required this.success});
 }

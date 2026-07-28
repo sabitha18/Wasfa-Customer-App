@@ -25,6 +25,13 @@ class Address {
   String apt;
   String floor;
 
+  /// Whether this is the account's default delivery address (confirmed
+  /// live in `GET /acct/addresses` as `is_default: 1/0`).
+  bool isDefault;
+  /// Optional delivery note for this address (confirmed live as `note`,
+  /// can be `null`).
+  String note;
+
   Address({
     this.id,
     this.title = 'Home/Apartment',
@@ -42,6 +49,8 @@ class Address {
     this.building = '',
     this.apt = '',
     this.floor = '',
+    this.isDefault = false,
+    this.note = '',
   });
 
   String get formatted => [
@@ -60,22 +69,42 @@ class Address {
         last: asString(json, const ['last_name', 'last']),
         email: asString(json, const ['email']),
         phone: asString(json, const ['phone']),
+        // Confirmed live via the checkout endpoint: the real field is
+        // `alternate_phone`, not `alt_phone` — kept both since the address
+        // list endpoint hasn't been double-checked for which one it uses.
+        alt: asString(json, const ['alternate_phone', 'alt_phone', 'alt']),
         governorateId: asIntOrNull(json, const ['governorate_id']),
         areaId: asIntOrNull(json, const ['area_id']),
-        gov: asString(json, const ['governorate_name', 'governorate']),
-        area: asString(json, const ['area_name', 'area']),
+        // Confirmed live: the real response uses the literal key 'gov' —
+        // 'governorate_name'/'governorate' alone never matched it, so this
+        // silently came back empty every time.
+        gov: asString(json, const ['gov', 'governorate_name', 'governorate']),
+        area: asString(json, const ['area', 'area_name']),
         block: asString(json, const ['block']),
         street: asString(json, const ['street']),
         building: asString(json, const ['building']),
         apt: asString(json, const ['flat', 'apt']),
         floor: asString(json, const ['floor']),
+        isDefault: asBool(json, const ['is_default']),
+        note: asString(json, const ['note']),
       );
 
   /// Body for `POST /acct/address-save`. `id: null` = create.
+  ///
+  /// This was silently dropping `first_name`/`last_name`/`email`/`alt_phone`
+  /// — the form collects all four, but they never made it into the request
+  /// body, so the server never had them to save. That's why editing an
+  /// address later showed them blank: it's not a display bug, the save
+  /// itself never sent them in the first place.
   Map<String, dynamic> toSaveJson(int userId) => {
         'user_id': userId,
         'id': id,
         'title': title,
+        'first_name': first,
+        'last_name': last,
+        'email': email,
+        'phone': phone,
+        'alt_phone': alt,
         'governorate_id': governorateId,
         'area_id': areaId,
         'block': block,
@@ -83,6 +112,7 @@ class Address {
         'building': building,
         'floor': floor,
         'flat': apt,
-        'phone': phone,
+        'note': note,
+        'is_default': isDefault,
       };
 }

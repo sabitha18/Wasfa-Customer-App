@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "912328525338",
+    "project_id": "wasfa-rx",
+    "storage_bucket": "wasfa-rx.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:912328525338:android:ea4b12ab846d0b9df073a3",
+        "android_client_info": {
+          "package_name": "com.example.wasfa_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD2_DTCpDnwo9-ob4ZdiFb4OU2rNmJiZeg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:912328525338:android:c8ef5041385bd466f073a3",
+        "android_client_info": {
+          "package_name": "kw.wasfa.customer"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD2_DTCpDnwo9-ob4ZdiFb4OU2rNmJiZeg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -4,12 +4,14 @@ import '../../core/routing/app_routes.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/formatters.dart';
 import '../../data/models/pharmacy_store.dart';
+import '../../state/auth_state.dart';
 import '../../state/cart_state.dart';
 import '../../viewmodels/shop_view_model.dart';
 import '../../viewmodels/store_view_model.dart';
 import '../widgets/app_top_bar.dart';
 import '../widgets/product_card.dart';
 import '../widgets/section_header.dart';
+import 'brands_screen.dart';
 import 'home_screen.dart' show PromoCard;
 import 'shop_screen.dart';
 
@@ -19,8 +21,9 @@ class StoreScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final userId = context.read<AuthState>().userId;
     return ChangeNotifierProvider(
-      create: (_) => StoreViewModel(store),
+      create: (_) => StoreViewModel(store, userId: userId),
       child: _StoreBody(store: store),
     );
   }
@@ -30,14 +33,21 @@ class _StoreBody extends StatelessWidget {
   final PharmacyStore store;
   const _StoreBody({required this.store});
 
-  void _openShop(BuildContext context, {String? category, String? brand}) {
+  void _openShop(BuildContext context, {String? category, String? brand, bool offersOnly = false, bool bestSellersOnly = false}) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => ShopScreen(
           // `shopId` (the store's user_id) is what actually scopes the server
           // listing to this store; `pharmacy` is kept for the header title.
-          initialFilter: ShopFilter(pharmacy: store.seller, shopId: store.id, category: category, brand: brand),
+          initialFilter: ShopFilter(
+            pharmacy: store.seller,
+            shopId: store.id,
+            category: category,
+            brand: brand,
+            offersOnly: offersOnly,
+            bestSellersOnly: bestSellersOnly,
+          ),
         ),
       ),
     );
@@ -168,45 +178,19 @@ class _StoreBody extends StatelessWidget {
                 ),
               ),
 
-              // All products — this pharmacy's full catalogue (server-scoped by shop id)
-              SliverToBoxAdapter(child: SectionHeader(title: 'All products', actionLabel: 'See all', onAction: () => _openShop(context))),
+              // .sec "Shop by category" + .catgrid — matches rStore(): the
+              // category grid is the first section after the carousel, and
+              // its header always renders (an empty catgrid just renders
+              // nothing, same as the HTML's empty div when a store has no
+              // categorised products).
+              SliverToBoxAdapter(child: SectionHeader(title: 'Shop by category', actionLabel: 'See all', onAction: () => _openShop(context))),
               if (vm.isLoading)
                 const SliverToBoxAdapter(
                   child: Padding(padding: EdgeInsets.symmetric(vertical: 34), child: Center(child: CircularProgressIndicator())),
-                ),
-              if (!vm.isLoading && vm.products.isEmpty)
-                const SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    child: Text('No products available from this pharmacy yet.', style: TextStyle(color: AppColors.muted, fontSize: 13)),
-                  ),
-                ),
-              if (!vm.isLoading && vm.products.isNotEmpty)
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                  sliver: SliverGrid(
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: .56),
-                    delegate: SliverChildBuilderDelegate(
-                          (context, i) => ProductCard(
-                        product: vm.products[i],
-                        onTap: () => Navigator.pushNamed(context, Routes.product, arguments: vm.products[i].id),
-                      ),
-                      childCount: vm.products.length,
-                    ),
-                  ),
-                ),
-
-              // .sec "Shop by category" — only when the API data actually has categories
-              if (vm.categoriesInStore.isNotEmpty) ...[
-                SliverToBoxAdapter(child: SectionHeader(title: 'Shop by category', actionLabel: 'See all', onAction: () => _openShop(context))),
+                )
+              else
                 SliverToBoxAdapter(
-                  child: vm.categoriesInStore.isEmpty
-                      ? const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16),
-                    child: Text('No results', style: TextStyle(color: AppColors.muted, fontSize: 13)),
-                  )
-                      : GridView.builder(
+                  child: GridView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
@@ -214,6 +198,7 @@ class _StoreBody extends StatelessWidget {
                     itemCount: vm.categoriesInStore.length,
                     itemBuilder: (context, i) {
                       final c = vm.categoriesInStore[i];
+                      final iconUrl = c['icon'];
                       return GestureDetector(
                         onTap: () => _openShop(context, category: c['cat']),
                         child: Column(
@@ -223,7 +208,19 @@ class _StoreBody extends StatelessWidget {
                                 width: double.infinity,
                                 decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(14)),
                                 alignment: Alignment.center,
-                                child: Text(c['emoji']!, style: const TextStyle(fontSize: 30)),
+                                // Real category icon when the API provides one;
+                                // falls back to the emoji placeholder if there's
+                                // no icon, it's empty, or it fails to load.
+                                child: (iconUrl != null && iconUrl.isNotEmpty)
+                                    ? Padding(
+                                        padding: const EdgeInsets.all(10),
+                                        child: Image.network(
+                                          iconUrl,
+                                          fit: BoxFit.contain,
+                                          errorBuilder: (_, __, ___) => Text(c['emoji']!, style: const TextStyle(fontSize: 30)),
+                                        ),
+                                      )
+                                    : Text(c['emoji']!, style: const TextStyle(fontSize: 30)),
                               ),
                             ),
                             const SizedBox(height: 7),
@@ -234,22 +231,37 @@ class _StoreBody extends StatelessWidget {
                     },
                   ),
                 ),
-              ],
 
-              // .sec "Special offers" + .rail — only when there are offers
-              if (vm.offers.isNotEmpty) ...[
-                SliverToBoxAdapter(child: SectionHeader(title: 'Special offers', actionLabel: 'See all', onAction: () => _openShop(context))),
-                _ProductRail(products: vm.offers, onTapProduct: (p) => Navigator.pushNamed(context, Routes.product, arguments: p.id)),
-              ],
+              // .sec "Special offers" + .rail — header always renders per
+              // rStore(); only the rail content falls back to "No results".
+              // NOTE: See all here deliberately diverges from the HTML
+              // (which just calls the same unfiltered storeAll() as every
+              // other section) — passes offersOnly so Shop opens already
+              // narrowed to this store's actual offers, per client request.
+              SliverToBoxAdapter(child: SectionHeader(title: 'Special offers', actionLabel: 'See all', onAction: () => _openShop(context, offersOnly: true))),
+              _ProductRail(products: vm.offers, onTapProduct: (p) => Navigator.pushNamed(context, Routes.product, arguments: p.id)),
 
-              // .sec "Best sellers" + .rail — only when there are best sellers
-              if (vm.bestSellers.isNotEmpty) ...[
-                SliverToBoxAdapter(child: SectionHeader(title: 'Best sellers', actionLabel: 'See all', onAction: () => _openShop(context))),
-                _ProductRail(products: vm.bestSellers, onTapProduct: (p) => Navigator.pushNamed(context, Routes.product, arguments: p.id)),
-              ],
+              // .sec "Best sellers" + .rail — same divergence as Special
+              // offers above: See all passes bestSellersOnly instead of
+              // opening the unfiltered catalogue.
+              SliverToBoxAdapter(child: SectionHeader(title: 'Best sellers', actionLabel: 'See all', onAction: () => _openShop(context, bestSellersOnly: true))),
+              _ProductRail(products: vm.bestSellers, onTapProduct: (p) => Navigator.pushNamed(context, Routes.product, arguments: p.id)),
 
               // .sec "Top brands" + .brand-rail
-              SliverToBoxAdapter(child: SectionHeader(title: 'Top brands', actionLabel: 'See all', onAction: () => Navigator.pushNamed(context, Routes.brands, arguments: store))),
+              SliverToBoxAdapter(
+                child: SectionHeader(
+                  title: 'Top brands',
+                  actionLabel: 'See all',
+                  // Push directly (rather than the named Routes.brands route)
+                  // so we can hand BrandsScreen this store's real,
+                  // server-scoped brand list — see BrandsScreen for why that
+                  // matters for keeping the shop filter intact.
+                  onAction: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => BrandsScreen(store: store, brands: vm.brandsInStore)),
+                  ),
+                ),
+              ),
               SliverToBoxAdapter(
                 child: vm.brandsInStore.isEmpty
                     ? const Padding(

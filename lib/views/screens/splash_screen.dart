@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/routing/app_routes.dart';
 import '../../core/theme/app_colors.dart';
+import '../../state/auth_state.dart';
 import '../../state/location_state.dart';
 import 'location_gate_screen.dart';
 
@@ -21,7 +22,16 @@ class _SplashScreenState extends State<SplashScreen> {
 
   Future<void> _boot() async {
     final location = context.read<LocationState>();
-    await location.initialize();
+    // Waited together (not just location) so Home builds with userId
+    // already known. Previously this only awaited location, so Home's
+    // ChangeNotifierProviders (HomeViewModel, ShopViewModel, etc.) got
+    // constructed and fired their first round of API calls (`/app/home`,
+    // `/app/categories`, `/app/products`, ...) BEFORE AuthState.restore()
+    // (reading the saved login token from disk) had actually finished —
+    // meaning that first round always went out with no user_id at all,
+    // then something re-fetched a moment later once auth caught up. Every
+    // app launch was doing each of those requests twice for no reason.
+    await Future.wait([location.initialize(), context.read<AuthState>().restore()]);
     if (!mounted) return;
 
     if (location.status == LocationStatus.granted) {
