@@ -75,9 +75,11 @@ class Address {
         alt: asString(json, const ['alternate_phone', 'alt_phone', 'alt']),
         governorateId: asIntOrNull(json, const ['governorate_id']),
         areaId: asIntOrNull(json, const ['area_id']),
-        // Confirmed live: the real response uses the literal key 'gov' —
-        // 'governorate_name'/'governorate' alone never matched it, so this
-        // silently came back empty every time.
+        // 'gov' was confirmed live earlier (a response using the literal
+        // abbreviated key). checkout-init's addresses[] was later confirmed
+        // to send the full word instead — 'governorate'/'area' — so both
+        // forms are tried; keeping 'gov'/'area_name' too in case some other
+        // address source still uses the shorter/older form.
         gov: asString(json, const ['gov', 'governorate_name', 'governorate']),
         area: asString(json, const ['area', 'area_name']),
         block: asString(json, const ['block']),

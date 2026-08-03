@@ -27,6 +27,8 @@ class _TrackScreenState extends State<TrackScreen> {
   String? _liveStatus; // normalized prep/way/done from the server, if reachable
   String? _riderName;
   String? _riderPhone;
+  String? _vehicleType;
+  String? _plateNumber;
   String? _eta;
   double? _lat;
   double? _lng;
@@ -58,6 +60,8 @@ class _TrackScreenState extends State<TrackScreen> {
         _liveStatus = info.status;
         _riderName = info.riderName;
         _riderPhone = info.riderPhone;
+        _vehicleType = info.vehicleType;
+        _plateNumber = info.plateNumber;
         _eta = info.eta;
         _lat = info.lat;
         _lng = info.lng;
@@ -147,7 +151,19 @@ class _TrackScreenState extends State<TrackScreen> {
                       Text(_riderName ?? (status == 'way' ? 'Rider' : 'Not assigned yet'),
                           style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.navy)),
                       const SizedBox(height: 1),
-                      const Text('Express Rider', style: TextStyle(fontSize: 11.5, color: AppColors.sky, fontWeight: FontWeight.w600)),
+                      // Real vehicle info (confirmed live on the driver
+                      // object) — but only shown once a rider is actually
+                      // known. Right after checkout, no driver is assigned
+                      // yet at all, and this used to still show "Express
+                      // Rider" here regardless — directly under "Not
+                      // assigned yet" on the line above, reading like a
+                      // contradiction (a specific rider sounds assigned
+                      // when none is).
+                      if (_riderName != null)
+                        Text(
+                          _vehicleLabel(),
+                          style: const TextStyle(fontSize: 11.5, color: AppColors.sky, fontWeight: FontWeight.w600),
+                        ),
                       const SizedBox(height: 2),
                       Text(
                         _eta != null ? '${widget.orderId} · Arriving in ~$_eta' : widget.orderId,
@@ -215,6 +231,20 @@ class _TrackScreenState extends State<TrackScreen> {
     final parts = name.trim().split(RegExp(r'\s+'));
     if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
     return (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
+  }
+
+  /// e.g. "Motorbike · 123R", or just "Motorbike"/"123R" if only one of the
+  /// two is known, falling back to a generic label if a rider is assigned
+  /// but neither vehicle field came through.
+  String _vehicleLabel() {
+    final type = _vehicleType?.trim();
+    final plate = _plateNumber?.trim().toUpperCase();
+    final hasType = type != null && type.isNotEmpty;
+    final hasPlate = plate != null && plate.isNotEmpty;
+    if (hasType && hasPlate) return '${type[0].toUpperCase()}${type.substring(1)} · $plate';
+    if (hasType) return '${type[0].toUpperCase()}${type.substring(1)}';
+    if (hasPlate) return plate;
+    return 'Express Rider';
   }
 
   /// Was just `showToast(context, 'Calling rider…')` — a fake toast that

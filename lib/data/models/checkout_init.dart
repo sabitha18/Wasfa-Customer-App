@@ -172,13 +172,16 @@ class PaymentMethodsInfo {
       );
 
   /// Matches the keys [CartState]/checkout already use ('knet','card',
-  /// 'wallet','cod') — 'card' isn't a field this endpoint sends at all, so
-  /// it's just carried through as always-enabled unless/until confirmed
-  /// otherwise, to avoid silently hiding a payment option nobody asked to
-  /// hide.
+  /// 'wallet','cod'). 'card' isn't a field this endpoint sends at all —
+  /// this used to carry it through as always-enabled regardless (to avoid
+  /// silently hiding a payment option nobody had confirmed should be
+  /// hidden), but that turned out to be wrong: confirmed directly
+  /// (2026-08-03) that Card genuinely isn't an available option here, and
+  /// showing it anyway let people select a payment method the backend
+  /// can't actually process. Omitted entirely now unless/until the API
+  /// adds a real `card` field to gate it on.
   List<String> get enabledKeys => [
         if (knet) 'knet',
-        'card',
         if (wallet) 'wallet',
         if (cod) 'cod',
       ];
@@ -219,6 +222,17 @@ class Promotion {
   /// fixed_amount/percent as "unknown/inactive", not a third real type).
   final String? offerType;
   final double offerValue;
+  /// The ACTUAL savings this promotion would apply to the CURRENT cart —
+  /// confirmed live, distinct from [offerValue] (the promo's raw config
+  /// number, e.g. `2` for a fixed KWD-2 promo or `20` for a 20% one).
+  /// [offerValue] alone can't tell you what a percent promo actually saves
+  /// on a specific cart without redoing the math (and getting subtotal/cap
+  /// rules wrong is easy); this is the server's own pre-computed answer.
+  final double discount;
+  /// Ready-made display text (e.g. "KWD 2.000 off", "20% off") — confirmed
+  /// live, sitting right there unused while the promo sheet reconstructed
+  /// the same kind of string itself from [offerType]/[offerValue].
+  final String? label;
   final double? maxDiscount;
   final String? promoCode;
   /// 'min_items' | 'promo_code' | null — a null condition_type alongside a
@@ -242,6 +256,8 @@ class Promotion {
     required this.arabicTitle,
     this.offerType,
     required this.offerValue,
+    this.discount = 0,
+    this.label,
     this.maxDiscount,
     this.promoCode,
     this.conditionType,
@@ -275,6 +291,8 @@ class Promotion {
         arabicTitle: asString(json, const ['arabic_title']),
         offerType: asStringOrNull(json, const ['offer_type']),
         offerValue: asDouble(json, const ['offer_value']),
+        discount: asDouble(json, const ['discount']),
+        label: asStringOrNull(json, const ['label']),
         maxDiscount: asDoubleOrNull(json, const ['max_discount']),
         promoCode: asStringOrNull(json, const ['promo_code']),
         conditionType: asStringOrNull(json, const ['condition_type']),
@@ -298,6 +316,12 @@ class Promotion {
 class CheckoutSummary {
   final double subtotal;
   final double deliveryFee;
+  /// Confirmed live (2026-07-29), distinct from [couponDiscount] — a
+  /// separate savings figure baked into checkout's own totals (matches
+  /// `bogo_saved` seen on individual `/app/cart` lines: subtotal 11.70,
+  /// discount 5.85, grand_total 5.85 — the BOGO free unit accounted for
+  /// server-side here too, not just per-line in the cart).
+  final double discount;
   final double couponDiscount;
   final double grandTotal;
   final String currency;
@@ -305,6 +329,7 @@ class CheckoutSummary {
   const CheckoutSummary({
     required this.subtotal,
     required this.deliveryFee,
+    required this.discount,
     required this.couponDiscount,
     required this.grandTotal,
     required this.currency,
@@ -313,6 +338,7 @@ class CheckoutSummary {
   factory CheckoutSummary.fromJson(Map<String, dynamic> json) => CheckoutSummary(
         subtotal: asDouble(json, const ['subtotal']),
         deliveryFee: asDouble(json, const ['delivery_fee']),
+        discount: asDouble(json, const ['discount']),
         couponDiscount: asDouble(json, const ['coupon_discount']),
         grandTotal: asDouble(json, const ['grand_total']),
         currency: asString(json, const ['currency'], fallback: 'KWD'),

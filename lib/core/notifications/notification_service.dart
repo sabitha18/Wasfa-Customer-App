@@ -135,7 +135,18 @@ class NotificationService {
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(_channel);
 
-    await FirebaseMessaging.instance.requestPermission(alert: true, badge: true, sound: true);
+    // Times out rather than hanging indefinitely — this goes through
+    // Google Play Services on Android, which most emulator images don't
+    // have. Without a timeout, a hang here would also block every listener
+    // registration below it in this same function from ever running, on
+    // top of the app-startup hang this used to cause (see main.dart).
+    try {
+      await FirebaseMessaging.instance.requestPermission(alert: true, badge: true, sound: true).timeout(const Duration(seconds: 5));
+    } catch (_) {
+      // Non-fatal — continue registering listeners below regardless; push
+      // just won't work on this device, same as it wouldn't without Play
+      // Services anyway.
+    }
 
     // Foreground: FCM does NOT show a system notification on its own while
     // the app is open (on either platform) — show one via
@@ -174,7 +185,13 @@ class NotificationService {
     });
 
     // App was fully terminated and got opened by tapping the notification.
-    final initial = await FirebaseMessaging.instance.getInitialMessage();
+    // Same reasoning as requestPermission's timeout above.
+    RemoteMessage? initial;
+    try {
+      initial = await FirebaseMessaging.instance.getInitialMessage().timeout(const Duration(seconds: 5));
+    } catch (_) {
+      initial = null;
+    }
     if (initial != null) {
       debugPrint('WASFA_PUSH [tapped: was terminated] data=${initial.data}');
       _handleDeepLink(initial.data);

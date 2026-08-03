@@ -38,9 +38,12 @@ class _CartScreenState extends State<CartScreen> {
   Widget build(BuildContext context) {
     final cart = context.watch<CartState>();
     final store = cart.activeStore;
-    final groups = cart.groupsFor(store);
-    final keys = groups.keys.toList();
     final isRx = cart.cartTab == 'rx';
+    // Rx groups by prescription (its own subtotal + its own Checkout
+    // button — confirmed against the reference web app), not by pharmacy
+    // like the regular cart does.
+    final groups = isRx ? cart.rxGroupsFor() : cart.groupsFor(store);
+    final keys = groups.keys.toList();
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -123,7 +126,7 @@ class _CartScreenState extends State<CartScreen> {
                         ],
                       ),
                     ),
-                  if (keys.length > 1)
+                  if (!isRx && keys.length > 1)
                   // ── .togcard — light-blue tinted, no shadow ──
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
@@ -143,13 +146,17 @@ class _CartScreenState extends State<CartScreen> {
                         Switch(value: cart.deliverTogether, activeColor: AppColors.sky, onChanged: (_) => cart.toggleDeliverTogether()),
                       ]),
                     ),
-                  for (final k in keys) _PharmacyGroup(pharmacy: k, items: groups[k]!, isRx: isRx, cart: cart),
+                  for (final k in keys)
+                    if (isRx)
+                      _RxPrescriptionGroup(rxId: k, items: groups[k]!, cart: cart)
+                    else
+                      _PharmacyGroup(pharmacy: k, items: groups[k]!, isRx: isRx, cart: cart),
                 ],
               ),
             ),
         ],
       ),
-      bottomNavigationBar: keys.isEmpty
+      bottomNavigationBar: (keys.isEmpty || isRx)
           ? null
           : Builder(builder: (context) {
               final totals = cart.computeTotals();
@@ -226,6 +233,79 @@ class _Tab extends StatelessWidget {
   }
 }
 
+/// Confirmed against the reference web app (2026-07-31): each prescription
+/// in the Rx cart is its own card with its own subtotal and its own
+/// "Checkout" button — NOT grouped by pharmacy, and NOT combined into one
+/// cart-wide checkout the way [_PharmacyGroup] works for the regular cart.
+/// Different prescriptions may need to be fulfilled/paid separately, so
+/// tapping Checkout here scopes the whole checkout flow to just this
+/// prescription's lines (see checkout_screen.dart's `rxScope`).
+class _RxPrescriptionGroup extends StatelessWidget {
+  final String rxId;
+  final List<CartLine> items;
+  final CartState cart;
+  const _RxPrescriptionGroup({required this.rxId, required this.items, required this.cart});
+
+  @override
+  Widget build(BuildContext context) {
+    final sub = items.fold(0.0, (s, l) => s + cart.lineCharge(l));
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: AppColors.shSm),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Expanded(
+                child: Text('℞ Prescription #$rxId', overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 12.5)),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(color: AppColors.rose, borderRadius: BorderRadius.circular(20)),
+                child: const Text('Rx Required', style: TextStyle(color: Colors.white, fontSize: 9.5, fontWeight: FontWeight.w700)),
+              ),
+            ]),
+          ),
+          const Divider(height: 1, color: AppColors.line),
+          for (final line in items) _CartLineTile(line: line, isRx: true, cart: cart),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Text(Formatters.money(sub), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.navy)),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.navy,
+                  foregroundColor: Colors.white,
+                  // Overrides the app-wide ElevatedButtonTheme's
+                  // minimumSize: Size.fromHeight(50) (== width: infinity).
+                  // That default is fine for a full-width button in a
+                  // Column, but this one sits directly inside a Row
+                  // alongside the subtotal Text — Row gives non-flex
+                  // children unbounded width, and asking to fill infinite
+                  // width there crashes ("BoxConstraints forces an
+                  // infinite width"). Sized to content instead.
+                  minimumSize: Size.zero,
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 11),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(11)),
+                  elevation: 0,
+                ),
+                onPressed: () => Navigator.pushNamed(context, Routes.checkout, arguments: rxId),
+                child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text('Checkout', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                  SizedBox(width: 6),
+                  Icon(Icons.arrow_forward, size: 15),
+                ]),
+              ),
+            ]),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _PharmacyGroup extends StatelessWidget {
   final String pharmacy;
   final List<CartLine> items;
@@ -272,9 +352,36 @@ class _CartLineTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final product = line.productId != null ? CatalogRepository.instance.findProduct(line.productId!) : null;
     final name = line.nameOverride ?? product?.nameEn ?? 'Item';
-    final imageUrl = product?.imageUrl;
-    final isBogo = product?.isBogo ?? false;
-    final freeUnits = isBogo ? line.qty ~/ 2 : 0;
+    // Straight off the cart line itself (confirmed live `image` field on
+    // /app/cart, 2026-07-29) — not the CatalogRepository lookup above,
+    // which comes up null for most real cart lines since a server-synced
+    // line's productId is usually unset (see CartState.lineKey's doc).
+    // That's exactly why thumbnails were blank: `product` was null, so
+    // `product?.imageUrl` was always null too, regardless of whether the
+    // API actually had an image for this line.
+    final imageUrl = line.imageOverride ?? product?.imageUrl;
+    // Straight off the cart line itself now (confirmed live on /app/cart,
+    // 2026-07-29) — not a CatalogRepository lookup keyed by catalog
+    // productId, which a server-synced line never reliably carries (see
+    // CartState.lineKey's doc on apiProductId vs productId) and so was
+    // silently finding nothing for exactly the lines that matter here.
+    final bogoLabel = line.bogoDisplayLabel;
+    // Real free_qty, not a guess — only shows once the current quantity
+    // has actually earned at least one free unit (e.g. qty 3 under "Buy 1
+    // Get 1" → free_qty 1, paid_qty 2 per the confirmed response). Using
+    // free_qty itself rather than eyeballing qty directly is what makes
+    // this correct for any BOGO variant the backend might define, not
+    // just a strict "every 2nd unit" rule.
+    final freeQty = line.freeQty;
+    // Only meaningful for Rx lines — see CartState.isRxLineInStock's doc for
+    // why this is re-checked live against the cached prescription rather
+    // than trusting CartLine.inStock (captured once, at add time).
+    // Rx lines get a live re-check (see isRxLineInStock's doc — pricing/
+    // stock is set by a pharmacist, possibly well after the add, with no
+    // equivalent to loadCartRemote to refresh from). Regular cart lines
+    // trust their own inStock directly — it's kept fresh by loadCartRemote
+    // parsing in_stock fresh on every full sync, unlike the Rx side.
+    final outOfStock = isRx ? !cart.isRxLineInStock(line) : !line.inStock;
     final charge = cart.lineCharge(line);
     final full = line.lineTotalBeforeDiscount;
 
@@ -325,14 +432,36 @@ class _CartLineTile extends StatelessWidget {
                         Text(Formatters.money(full), style: const TextStyle(fontSize: 11, color: AppColors.muted, decoration: TextDecoration.lineThrough)),
                     ],
                   ),
-                  if (isBogo)
-                    Container(
-                      margin: const EdgeInsets.only(top: 5),
-                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-                      decoration: BoxDecoration(color: const Color(0xFFE4F6EF), borderRadius: BorderRadius.circular(12)),
+                  if (bogoLabel != null && freeQty != null && freeQty > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 3),
                       child: Text(
-                        freeUnits > 0 ? '🎁 1+1 · $freeUnits free' : '🎁 1+1 · add 1 more = free',
-                        style: const TextStyle(fontSize: 10.5, color: AppColors.ok, fontWeight: FontWeight.w700),
+                        '🎁 $bogoLabel · $freeQty free',
+                        style: const TextStyle(fontSize: 11, color: AppColors.ok, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  if (bogoLabel != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 3),
+                      child: Text(
+                        bogoLabel,
+                        style: const TextStyle(fontSize: 11, color: AppColors.rose, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  if (outOfStock)
+                    // Rx: went stale after being added — see
+                    // CartState.isRxLineInStock's doc — and excluded from
+                    // the actual Rx checkout submission (see
+                    // checkout_screen.dart's _placeRxOrder). Regular cart:
+                    // reflects in_stock from the last /app/cart sync;
+                    // not currently excluded from regular checkout, just
+                    // labeled — ask if you also want that enforced the
+                    // same way as the Rx side.
+                    Padding(
+                      padding: const EdgeInsets.only(top: 3),
+                      child: Text(
+                        'Out of stock',
+                        style: const TextStyle(fontSize: 11, color: AppColors.rose, fontWeight: FontWeight.w700),
                       ),
                     ),
                   const SizedBox(height: 6),
@@ -349,7 +478,7 @@ class _CartLineTile extends StatelessWidget {
                         width: 32,
                         child: Text('${line.qty}', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
                       ),
-                      _QtyButton(icon: Icons.add, onTap: () => cart.setQtyRemote(context, line.key, 1, rx: isRx)),
+                      _QtyButton(icon: Icons.add, onTap: outOfStock ? null : () => cart.setQtyRemote(context, line.key, 1, rx: isRx)),
                     ]),
                   ),
                 ],
@@ -371,13 +500,13 @@ class _CartLineTile extends StatelessWidget {
 
 class _QtyButton extends StatelessWidget {
   final IconData icon;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   const _QtyButton({required this.icon, required this.onTap});
   @override
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      child: SizedBox(width: 28, height: 28, child: Icon(icon, size: 14, color: AppColors.navy)),
+      child: SizedBox(width: 28, height: 28, child: Icon(icon, size: 14, color: onTap == null ? AppColors.muted : AppColors.navy)),
     );
   }
 }

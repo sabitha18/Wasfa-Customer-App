@@ -62,7 +62,12 @@ class AppRouter {
       case Routes.cart:
         return _page(const CartScreen());
       case Routes.checkout:
-        return _page(const CheckoutScreen());
+        // Rx checkout can be scoped to one specific prescription (see
+        // cart_screen.dart's _RxPrescriptionGroup — each prescription has
+        // its own Checkout button, confirmed against the reference web
+        // app) — args is a prescription id (String) in that case, null for
+        // the regular cart's unscoped checkout.
+        return _page(CheckoutScreen(rxScope: args as String?));
       case Routes.track:
         return _page(TrackScreen(orderId: args as String));
       case Routes.myRx:

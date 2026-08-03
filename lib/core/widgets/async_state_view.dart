@@ -159,7 +159,11 @@ Future<void> showBusyOverlay(BuildContext context, {String message = 'Please wai
                 child: CircularProgressIndicator(strokeWidth: 2.6, color: AppColors.sky),
               ),
               const SizedBox(width: 16),
-              Text(message, style: const TextStyle(color: AppColors.ink, fontWeight: FontWeight.w600, fontSize: 13.5)),
+              // Expanded, not a bare Text — a longer message (e.g.
+              // "Submitting your prescription order…") couldn't fit on one
+              // line within the dialog's ~232-256px width and overflowed
+              // the Row instead of wrapping.
+              Expanded(child: Text(message, style: const TextStyle(color: AppColors.ink, fontWeight: FontWeight.w600, fontSize: 13.5))),
             ],
           ),
         ),

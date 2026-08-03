@@ -71,6 +71,25 @@ class OrdersState extends ChangeNotifier {
       fresh.returnRequests = prev.returnRequests;
       fresh.rating = prev.rating;
       fresh.review = prev.review;
+      // The list endpoint's bare item/pharmacy counts (see
+      // Order.apiItemCount's doc) have no equivalent on the detail
+      // endpoint's response — a detail fetch's own copy always parses
+      // these as null. Without carrying the list's original values
+      // forward, opening this order's detail screen and going back would
+      // permanently replace a correct item count with however many line
+      // entries the detail response happens to break the order into.
+      fresh.apiItemCount ??= prev.apiItemCount;
+      fresh.apiPharmacyCount ??= prev.apiPharmacyCount;
+      // Detail-only fields (see Order.deliveryCharge's doc) — the list
+      // endpoint doesn't send any of these at all, so a fresh list re-fetch
+      // would otherwise wipe them back to their defaults (0/false/null)
+      // even though the detail screen already confirmed real values.
+      if (fresh.deliveryCharge == 0) fresh.deliveryCharge = prev.deliveryCharge;
+      if (fresh.discount == 0) fresh.discount = prev.discount;
+      if (!fresh.hasPendingCancel) fresh.hasPendingCancel = prev.hasPendingCancel;
+      if (!fresh.hasPendingReturn) fresh.hasPendingReturn = prev.hasPendingReturn;
+      fresh.paymentStatus ??= prev.paymentStatus;
+      fresh.deliveryAddress ??= prev.deliveryAddress;
     }
     return fresh;
   }
@@ -283,6 +302,14 @@ class OrdersState extends ChangeNotifier {
           skipped++;
           continue;
         }
+        // Confirmed live (`in_stock`) across product/cart/order/rx
+        // responses (2026-07-29) — an order line that's gone out of stock
+        // since it was fulfilled can't be reordered, same principle as
+        // [restricted] above.
+        if (!it.inStock) {
+          skipped++;
+          continue;
+        }
         // An order line's `product_id` is the *seller* product id — exactly
         // what checkout must send as `items[].id`. Without it the line can't
         // be re-ordered, so skip it rather than adding a dead cart entry.
@@ -294,7 +321,12 @@ class OrdersState extends ChangeNotifier {
         // Best-effort catalog match (for display name/emoji + BOGO math);
         // null is fine — the name falls back to the order line's own name.
         final cached = CatalogRepository.instance.findProduct(sellerProductId);
-        final key = '${sellerProductId}_${g.pharmacy}';
+        // Canonical key (see CartState.lineKey's doc) — this used to build
+        // its own `<id>_<pharmacy>` string here instead, which doesn't
+        // match what the shop grid/cart screen look up when apiProductId
+        // is known, so a reordered line's stepper could silently fail to
+        // show on the shop grid despite genuinely being in the cart.
+        final key = CartState.lineKey(apiProductId: sellerProductId, productId: cached?.id, seller: g.pharmacy);
         final existing = cartState.cart[key];
         if (existing != null) {
           existing.qty += it.qty;

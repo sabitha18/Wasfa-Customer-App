@@ -6,6 +6,7 @@ import '../../core/utils/formatters.dart';
 import '../../core/utils/auth_gate.dart';
 import '../../core/widgets/async_state_view.dart';
 import '../../data/models/checkout_init.dart';
+import '../../data/models/cart_line.dart';
 import '../../data/services/account_service.dart';
 import '../../data/services/tap_payment_service.dart';
 import '../../state/address_state.dart';
@@ -21,7 +22,13 @@ import '../widgets/toast.dart';
 import 'track_screen.dart';
 import '../../data/models/address.dart';
 class CheckoutScreen extends StatefulWidget {
-  const CheckoutScreen({super.key});
+  /// A specific prescription id, when Rx checkout has been scoped to just
+  /// one prescription (see cart_screen.dart's _RxPrescriptionGroup) — null
+  /// for the regular cart's unscoped checkout. Confirmed against the
+  /// reference web app (2026-07-31): each prescription in the Rx cart gets
+  /// its own separate checkout, not one combined checkout for everything.
+  final String? rxScope;
+  const CheckoutScreen({super.key, this.rxScope});
 
   @override
   State<CheckoutScreen> createState() => _CheckoutScreenState();
@@ -63,7 +70,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   Future<void> _loadCheckoutInit(int userId) async {
     setState(() => _initLoading = true);
     try {
-      final data = await AccountService.instance.checkoutInit(userId);
+      final data = await AccountService.instance.checkoutInit(userId, prescriptionId: widget.rxScope);
       if (!mounted) return;
       context.read<AddressState>().hydrateAddresses(data.addresses);
       context.read<AppSettingsState>().applyFromCheckout(data.paymentMethods.enabledKeys);
@@ -100,6 +107,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         initLoading: _initLoading,
         initError: _initError,
         onInitDataChanged: _onInitDataChanged,
+        rxScope: widget.rxScope,
       ),
     );
   }
@@ -110,7 +118,8 @@ class _CheckoutBody extends StatelessWidget {
   final bool initLoading;
   final String? initError;
   final ValueChanged<CheckoutInitData> onInitDataChanged;
-  const _CheckoutBody({required this.initData, required this.initLoading, required this.initError, required this.onInitDataChanged});
+  final String? rxScope;
+  const _CheckoutBody({required this.initData, required this.initLoading, required this.initError, required this.onInitDataChanged, this.rxScope});
 
   @override
   Widget build(BuildContext context) {
@@ -118,7 +127,11 @@ class _CheckoutBody extends StatelessWidget {
     final cart = context.watch<CartState>();
     final addressState = context.watch<AddressState>();
     final location = context.watch<LocationState>();
-    final totals = cart.computeTotals();
+    // Scoped to just this prescription's lines when rxScope is set (see its
+    // doc) — null otherwise, meaning "use the whole active store" as before.
+    final Map<String, CartLine>? rxScopeStore =
+        (rxScope != null && cart.cartTab == 'rx') ? Map.fromEntries(cart.rxCart.entries.where((e) => e.value.rxId == rxScope)) : null;
+    final totals = cart.computeTotals(storeOverride: rxScopeStore);
     final a = addressState.effectiveAddress;
 
     // CheckoutScreen's initState only ever calls syncFromLocation ONCE, right
@@ -367,9 +380,18 @@ class _CheckoutBody extends StatelessWidget {
               // computation only until that fetch completes (or if it
               // fails), so the screen isn't blank in the meantime.
               final summary = initData?.summary;
-              final local = cart.computeTotals();
+              final local = cart.computeTotals(storeOverride: rxScopeStore);
               final subtotal = summary?.subtotal ?? local.before;
-              final deliveryFee = summary?.deliveryFee ?? local.deliveryFee;
+              // Real per-area rate + free-delivery threshold (confirmed
+              // live `free_enabled`/`free_over`/each area's own `fee`) —
+              // NOT the old fallback here, which used to be
+              // CartState.pharmacyFee: a flat "free over 3 KWD, else 750
+              // fils" rule straight out of the HTML prototype, applied
+              // regardless of which area was actually selected. AreaCatalog
+              // already had the real per-area numbers this whole time
+              // (area_catalog.dart's feeFor), just never wired in anywhere.
+              final deliveryFee = summary?.deliveryFee ?? addressState.areaCatalog.feeFor(a?.areaId, subtotal);
+              final discount = summary?.discount ?? local.itemDiscount;
               final couponDiscount = summary?.couponDiscount ?? local.promoDiscount;
               final grandTotal = summary?.grandTotal ?? local.due;
               final appliedLabel = initData?.appliedCouponCode ?? initData?.appliedPromo?.promoCode;
@@ -379,7 +401,7 @@ class _CheckoutBody extends StatelessWidget {
                 child: Column(
                   children: [
                     _SumRow(label: 'Subtotal', value: Formatters.money(subtotal)),
-                    if (summary == null && local.itemDiscount > 0) _SumRow(label: 'Discount', value: '−${Formatters.money(local.itemDiscount)}', color: AppColors.rose),
+                    if (discount > 0) _SumRow(label: 'Discount', value: '−${Formatters.money(discount)}', color: AppColors.rose),
                     _SumRow(label: 'Delivery fee', value: deliveryFee == 0 ? 'Free' : Formatters.money(deliveryFee)),
                     if (couponDiscount > 0) _SumRow(label: appliedLabel != null ? 'Promo ($appliedLabel)' : 'Promo', value: '−${Formatters.money(couponDiscount)}', color: AppColors.rose),
                     Container(
@@ -420,7 +442,11 @@ class _CheckoutBody extends StatelessWidget {
   }
 
   Future<void> _placeOrder(BuildContext context, CartState cart, CheckoutViewModel vm, CheckoutInitData? initData) async {
-    if (cart.cartCount == 0 && cart.rxCartCount == 0) return;
+    // Scoped to just this prescription's lines when rxScope is set — see
+    // its doc on CheckoutScreen.
+    final scopedRxCart =
+        rxScope != null ? Map<String, CartLine>.fromEntries(cart.rxCart.entries.where((e) => e.value.rxId == rxScope)) : cart.rxCart;
+    if (cart.cartCount == 0 && scopedRxCart.isEmpty) return;
 
     if (!await requireLogin(context)) return;
     if (!context.mounted) return;
@@ -430,7 +456,7 @@ class _CheckoutBody extends StatelessWidget {
     final address = addressState.effectiveAddress;
     final orders = context.read<OrdersState>();
     final location = context.read<LocationState>();
-    final totals = cart.computeTotals();
+    final totals = cart.computeTotals(storeOverride: cart.cartTab == 'rx' ? scopedRxCart : null);
     // Prefer the server's own total (confirmed live via checkout-init) for
     // the wallet-balance check, same reasoning as the summary display above.
     final due = initData?.summary.grandTotal ?? totals.due;
@@ -443,31 +469,24 @@ class _CheckoutBody extends StatelessWidget {
       showErrorToast(context, 'Insufficient wallet balance for this order.');
       return;
     }
-    // The scenario this is actually meant to catch: the person is trying to
-    // order to their CURRENT location, but it didn't resolve to anywhere in
-    // the delivery-area catalog — NOT simply "no address has valid ids at
-    // all" (checking that alone would miss this case entirely, since
-    // effectiveAddress silently falls back to a SAVED address with
-    // perfectly valid ids, just not the place they're actually standing).
-    // Was previously silent about this exact substitution — the order
-    // would just go out to whichever saved address happened to be
-    // selected, without ever telling the person "hey, we couldn't use
-    // where you actually are."
-    if (addressState.useCurrentLocation && addressState.currentLocationMatchFailed) {
-      final saved = await showAddressFormSheet(context, addressState, -1);
-      if (!context.mounted) return;
-      if (saved == true) {
-        await _placeOrder(context, cart, vm, initData);
-      } else {
-        showErrorToast(context, 'We couldn\'t match your current location — please add or choose a delivery address.');
-      }
-      return;
-    }
     if (address.governorateId == null || address.areaId == null) {
-      // Safety net for any other case where the resolved address itself
-      // lacks a real area (shouldn't normally happen for a saved address,
-      // but defends against it rather than silently placing an
-      // unfulfillable order).
+      // Catches every case where the ACTUALLY-RESOLVED address (whatever
+      // effectiveAddress landed on — current-location match, or its own
+      // fallback to a saved address) lacks a real area to deliver to.
+      // Checking the resolved address itself, rather than the internal
+      // useCurrentLocation/currentLocationMatchFailed flags on their own,
+      // is what matters here — those flags describe HOW an address got
+      // resolved, not whether the result is actually usable. A previous
+      // version blocked checkout whenever useCurrentLocation was still
+      // true and the GPS match had failed, even when effectiveAddress had
+      // already correctly fallen back to a perfectly valid saved address
+      // — interrupting an already-successful fallback with an unnecessary
+      // "Add address" prompt, on every fresh checkout session where GPS
+      // simply hadn't resolved yet (useCurrentLocation defaults to true
+      // regardless of whether the person ever asked for their current
+      // location specifically). Re-selecting an address in that state
+      // worked purely because doing so sets useCurrentLocation to false —
+      // not because anything about the address itself had changed.
       final saved = await showAddressFormSheet(context, addressState, -1);
       if (!context.mounted) return;
       if (saved == true) {
@@ -561,7 +580,40 @@ class _CheckoutBody extends StatelessWidget {
       );
     } catch (e) {
       if (context.mounted) hideBusyOverlay(context);
-      if (context.mounted) showErrorToast(context, describeError(e));
+      if (!context.mounted) return;
+      final message = describeError(e);
+      // A server-side address validation failure (e.g. "The address.block
+      // field is required") was easy to miss as a toast — it could land
+      // half-covering whatever field the person was looking at (see the
+      // screenshot this was reported from), and disappears on its own
+      // before there's time to act on it. Detected by the Laravel-style
+      // "address.<field>" naming in the message; shown as a dialog instead,
+      // with a direct path to fix the actual problem rather than just
+      // reading about it.
+      if (message.toLowerCase().contains('address.')) {
+        await _showAddressErrorDialog(context, addressState, message);
+      } else {
+        showErrorToast(context, message);
+      }
+    }
+  }
+
+  /// See the catch block in [_placeOrder] above for why this exists —
+  /// same address-validation-error dialog used by [_placeRxOrder] too.
+  Future<void> _showAddressErrorDialog(BuildContext context, AddressState addressState, String message) async {
+    final shouldEdit = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('There\'s a problem with this address'),
+        content: Text(message),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Edit address')),
+        ],
+      ),
+    );
+    if (shouldEdit == true && context.mounted) {
+      await showAddressFormSheet(context, addressState, addressState.selectedIndex);
     }
   }
 
@@ -584,13 +636,36 @@ class _CheckoutBody extends StatelessWidget {
       return;
     }
 
+    // Scoped to just this prescription's lines (see rxScope's doc on
+    // CheckoutScreen) — confirmed against the reference web app, each
+    // prescription's Rx cart lines check out separately, not combined with
+    // whatever else happens to be in the Rx cart at the same time.
+    final scopedRxCart =
+        rxScope != null ? Map<String, CartLine>.fromEntries(cart.rxCart.entries.where((e) => e.value.rxId == rxScope)) : cart.rxCart;
+
+    // Only in-stock lines actually go through — see CartState.isRxLineInStock's
+    // doc for why an Rx line can go stale after being added (pricing/stock is
+    // set by a pharmacist, possibly well after the add). Left in the cart
+    // rather than removed, same as a line whose own checkout call fails below,
+    // so the person can see it's still there (now labeled) rather than having
+    // it silently vanish.
+    final outOfStockKeys = scopedRxCart.entries.where((e) => !cart.isRxLineInStock(e.value)).map((e) => e.key).toSet();
+    if (outOfStockKeys.length == scopedRxCart.length && scopedRxCart.isNotEmpty) {
+      showErrorToast(context, 'Every item in your Rx cart is out of stock right now — nothing to submit.');
+      return;
+    }
+    final inStockRxCart = Map<String, CartLine>.fromEntries(scopedRxCart.entries.where((e) => !outOfStockKeys.contains(e.key)));
+    if (outOfStockKeys.isNotEmpty) {
+      showToast(context, '${outOfStockKeys.length} out-of-stock item${outOfStockKeys.length > 1 ? 's' : ''} skipped');
+    }
+
     showBusyOverlay(context, message: 'Submitting your prescription order…');
     try {
       final results = await orders.placeRxOrdersRemote(
         userId: auth.userId!,
         addressId: address.id!,
         payment: vm.pay,
-        rxCart: cart.rxCart,
+        rxCart: inStockRxCart,
       );
       if (context.mounted) hideBusyOverlay(context);
       if (!context.mounted) return;
@@ -618,7 +693,12 @@ class _CheckoutBody extends StatelessWidget {
           Navigator.pop(context);
         }
       } else if (succeeded.isEmpty) {
-        showErrorToast(context, failed.first.error ?? 'Couldn\'t submit your prescription order.');
+        final message = failed.first.error ?? 'Couldn\'t submit your prescription order.';
+        if (message.toLowerCase().contains('address.')) {
+          await _showAddressErrorDialog(context, context.read<AddressState>(), message);
+        } else {
+          showErrorToast(context, message);
+        }
       } else {
         // Mixed result — some prescriptions checked out, at least one didn't.
         showToast(context, '${succeeded.length} submitted, ${failed.length} failed — still in your Rx cart');
@@ -626,7 +706,13 @@ class _CheckoutBody extends StatelessWidget {
       }
     } catch (e) {
       if (context.mounted) hideBusyOverlay(context);
-      if (context.mounted) showErrorToast(context, describeError(e));
+      if (!context.mounted) return;
+      final message = describeError(e);
+      if (message.toLowerCase().contains('address.')) {
+        await _showAddressErrorDialog(context, context.read<AddressState>(), message);
+      } else {
+        showErrorToast(context, message);
+      }
     }
   }
 
@@ -666,7 +752,7 @@ class _CheckoutBody extends StatelessWidget {
           // full re-fetch to actually refresh what's on screen.
           Future<void> refreshAfterChange() async {
             if (userId == null) return;
-            final fresh = await AccountService.instance.checkoutInit(userId);
+            final fresh = await AccountService.instance.checkoutInit(userId, prescriptionId: rxScope);
             onChanged(fresh);
           }
 
@@ -780,9 +866,18 @@ class _CheckoutBody extends StatelessWidget {
                         separatorBuilder: (_, __) => const SizedBox(height: 8),
                         itemBuilder: (_, i) {
                           final promo = active[i];
-                          final desc = promo.offerType == 'percent'
+                          // The server's own label (e.g. "20% off"), not a
+                          // reconstruction — offerValue alone is the raw
+                          // config number, not display text. Falls back to
+                          // building one only if label is somehow missing.
+                          final desc = promo.label ?? (promo.offerType == 'percent'
                               ? '${promo.offerValue.toStringAsFixed(0)}% off'
-                              : Formatters.money(promo.offerValue) + ' off';
+                              : Formatters.money(promo.offerValue) + ' off');
+                          // The ACTUAL savings for THIS cart (not just the
+                          // promo's raw rate) — matters most for a percent
+                          // promo, where "20% off" alone doesn't say how
+                          // much that comes to on the current subtotal.
+                          final savings = (promo.offerType == 'percent' && promo.discount > 0) ? ' · saves ${Formatters.money(promo.discount)}' : '';
                           return GestureDetector(
                             onTap: checking ? null : () => applyPromotion(promo),
                             child: Container(
@@ -796,7 +891,7 @@ class _CheckoutBody extends StatelessWidget {
                                       Text(promo.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5, color: AppColors.navy)),
                                       const SizedBox(height: 2),
                                       Text(
-                                        promo.requiresCode ? '$desc · code ${promo.promoCode}' : desc,
+                                        promo.requiresCode ? '$desc$savings · code ${promo.promoCode}' : '$desc$savings',
                                         style: const TextStyle(fontSize: 11, color: AppColors.muted),
                                       ),
                                     ],

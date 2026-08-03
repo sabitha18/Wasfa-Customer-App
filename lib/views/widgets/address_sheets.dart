@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/auth_gate.dart';
+import '../../core/utils/formatters.dart';
 import '../../core/widgets/async_state_view.dart';
 import '../../data/models/address.dart';
 import '../../state/address_state.dart';
@@ -45,7 +46,21 @@ void showAddressPickerSheet(BuildContext context, AddressState addressState, Loc
               decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.line, width: 1))),
               child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                 const Text('Delivery addresses', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.navy)),
-                InkWell(onTap: () => Navigator.pop(context), child: const Icon(Icons.close_rounded, size: 20, color: AppColors.muted)),
+                InkWell(
+                  onTap: () => Navigator.pop(sheetContext),
+                  borderRadius: BorderRadius.circular(20),
+                  // Was a bare 20x20 icon with no padding at all — the
+                  // smallest tap target in this whole sheet, easy to miss
+                  // (same root cause as the shop stepper's earlier fix).
+                  // Padding here enlarges the tappable area without
+                  // changing how the icon itself looks. Also now uses
+                  // sheetContext (this route's own context), not the
+                  // outer context from before the sheet opened — the
+                  // correct/robust way to pop a route from its own
+                  // builder, rather than relying on it happening to
+                  // resolve to the same Navigator either way.
+                  child: const Padding(padding: EdgeInsets.all(8), child: Icon(Icons.close_rounded, size: 20, color: AppColors.muted)),
+                ),
               ]),
             ),
             // .sh-b — address rows styled like .payopt — now scrollable
@@ -70,7 +85,7 @@ void showAddressPickerSheet(BuildContext context, AddressState addressState, Loc
                           area: locationState.area,
                           street: locationState.street,
                         ));
-                    Navigator.pop(context);
+                    Navigator.pop(sheetContext);
                   },
                   child: Container(
                     padding: const EdgeInsets.all(13),
@@ -128,9 +143,9 @@ void showAddressPickerSheet(BuildContext context, AddressState addressState, Loc
                   child: GestureDetector(
                     onTap: () {
                       addressState.select(i);
-                      Navigator.pop(context);
+                      Navigator.pop(sheetContext);
                     },
-                    onLongPress: () => showAddressFormSheet(context, addressState, i),
+                    onLongPress: () => showAddressFormSheet(sheetContext, addressState, i),
                     child: Container(
                       padding: const EdgeInsets.all(13),
                       decoration: BoxDecoration(
@@ -166,7 +181,7 @@ void showAddressPickerSheet(BuildContext context, AddressState addressState, Loc
                         // to "Shipping address"), but Account needs full
                         // management from inside this same sheet.
                         InkWell(
-                          onTap: () => showAddressFormSheet(context, addressState, i),
+                          onTap: () => showAddressFormSheet(sheetContext, addressState, i),
                           borderRadius: BorderRadius.circular(15),
                           child: const Padding(padding: EdgeInsets.all(6), child: Icon(Icons.edit_outlined, size: 17, color: AppColors.sky)),
                         ),
@@ -193,7 +208,13 @@ void showAddressPickerSheet(BuildContext context, AddressState addressState, Loc
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                   onPressed: () {
-                    Navigator.pop(context);
+                    Navigator.pop(sheetContext);
+                    // Not sheetContext here — this sheet is closing right
+                    // above, and opening the next one needs a context that
+                    // outlives that, unlike the pop itself. context (the
+                    // underlying screen's own, from before this sheet ever
+                    // opened) is what's actually still around a moment
+                    // from now.
                     showAddressFormSheet(context, addressState, -1);
                   },
                   child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -283,6 +304,7 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
     _apt = TextEditingController(text: existing?.apt ?? '');
     _floor = TextEditingController(text: existing?.floor ?? '');
     _note = TextEditingController(text: existing?.note ?? '');
+    if (!_isEdit) _autofillFromAccount();
     // New addresses default to "set as default" when it's the very first
     // one on the account (nothing to compare against yet); otherwise
     // reflect whatever the server already has for an existing address.
@@ -292,6 +314,28 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
     } else {
       WidgetsBinding.instance.addPostFrameCallback((_) => _autofillFromLocation());
     }
+  }
+
+  /// New addresses only — the person's name/email/phone are already on
+  /// file from signing in; no reason to make them retype it here. Splits
+  /// the single combined `AppUser.name` into first/last the same way
+  /// profile_screen.dart does when it sends the save request (there's no
+  /// separate first/last on the account itself, only here on the address
+  /// form). `Formatters.localPhone` strips the +965 country code the same
+  /// way it does everywhere else this number is shown in a plain field
+  /// (profile screen, account header) — this form has its own fixed
+  /// "+965" box next to the input, so the input itself should hold just
+  /// the local number, not the full one.
+  void _autofillFromAccount() {
+    final user = context.read<AuthState>().user;
+    if (user == null) return;
+    final nameParts = user.name.trim().split(RegExp(r'\s+'));
+    if (nameParts.isNotEmpty && nameParts.first.isNotEmpty) {
+      _first.text = nameParts.first;
+      _last.text = nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '';
+    }
+    if ((user.email ?? '').isNotEmpty) _email.text = user.email!;
+    if (user.phone.isNotEmpty) _phone.text = Formatters.localPhone(user.phone);
   }
 
   /// New addresses only — best-effort name match against `/areas`.

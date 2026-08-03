@@ -169,6 +169,17 @@ class AddressState extends ChangeNotifier {
       }
     }
 
+    // Client-reported issue: "Current location" showed as its own
+    // selectable entry even when a saved address already covers that exact
+    // same area — e.g. current location resolves to Mirqab, and a "Work"
+    // address is also in Mirqab, yet the picker still defaulted to the
+    // generic current-location entry instead of that saved one. See
+    // [_preferSavedAddressForArea]'s doc for why, and for the other timing
+    // order this also has to handle.
+    if (matchedArea != null && _preferSavedAddressForArea(matchedGov.id, matchedArea.id)) {
+      return;
+    }
+
     currentLocationAddress = Address(
       title: 'Current location',
       governorateId: matchedGov.id,
@@ -178,6 +189,32 @@ class AddressState extends ChangeNotifier {
       street: street ?? '',
     );
     notifyListeners();
+  }
+
+  /// A GPS-derived address only ever has governorate/area — no block,
+  /// street, or building — while a saved address for that same area
+  /// already has full delivery details. So whenever they'd resolve to the
+  /// same area, the saved one is always the better choice, and this
+  /// switches to it (turning [useCurrentLocation] off) instead of leaving
+  /// the generic "Current location" entry as if it were meaningfully
+  /// different. Returns whether it actually switched.
+  ///
+  /// Called from two places, to cover both orderings of an inherent race:
+  /// [syncFromLocation] (GPS resolves, check the addresses already loaded)
+  /// and [hydrateAddresses]/[loadAddresses] (addresses load/arrive AFTER
+  /// GPS already resolved to a generic entry — without this second call
+  /// site, that ordering would leave the generic entry showing forever for
+  /// this session, since the retry logic that re-attempts
+  /// [syncFromLocation] only fires while [currentLocationAddress] is still
+  /// null, which it no longer would be).
+  bool _preferSavedAddressForArea(int governorateId, int areaId) {
+    final match = addresses.where((a) => a.governorateId == governorateId && a.areaId == areaId).toList();
+    if (match.isEmpty) return false;
+    useCurrentLocation = false;
+    currentLocationAddress = null;
+    selectedIndex = addresses.indexOf(match.first);
+    notifyListeners();
+    return true;
   }
 
   /// Governorate/area lists + delivery fees — needed for the address form
@@ -190,12 +227,91 @@ class AddressState extends ChangeNotifier {
     notifyListeners();
     try {
       areaCatalog = await _catalogService.areas();
+      resolveMissingAreaIds();
     } catch (e) {
       areasError = describeError(e);
     } finally {
       areasLoading = false;
       notifyListeners();
     }
+  }
+
+  /// Best-effort recovery for a saved address missing EITHER its area ids
+  /// or its area display names — whichever direction is missing, resolved
+  /// from the other using [areaCatalog] (the same list the "Add address"
+  /// dropdowns use).
+  ///
+  /// Direction 1 (id known, name missing) was needed for checkout-init's
+  /// `addresses[]`, which as of 2026-07-29 sent real `governorate_id`/
+  /// `area_id` but no name field at all. The backend has since added
+  /// `governorate`/`area` (confirmed live, full words — not the older
+  /// abbreviated `gov` key some other response used) directly to that same
+  /// endpoint, so this direction should rarely trigger for it now. Left in
+  /// as a safety net for any other address source that might still omit
+  /// the name.
+  ///
+  /// Direction 2 (name known, id missing) was the original reason this
+  /// existed: `governorateId`/`areaId` on [Address.fromJson] only ever try
+  /// ONE guessed field name each with no confirmed-live example of their
+  /// own. If some address source sends the name under a key this model
+  /// doesn't try, an address could display its area name fine while still
+  /// failing the governorateId/areaId null check in checkout_screen.dart's
+  /// `_placeOrder` — forcing an unnecessary "Add address" sheet for an
+  /// address that was never actually missing anything.
+  ///
+  /// Safe to call repeatedly (from wherever finishes loading last,
+  /// [loadAreas] or [loadAddresses]/[hydrateAddresses], since either can
+  /// resolve first) — only fills in whatever's still missing, never
+  /// overwrites a value that's already there.
+  void resolveMissingAreaIds() {
+    if (areaCatalog.governorates.isEmpty) return;
+    for (final a in addresses) {
+      // Direction 1: have a real governorateId/areaId, missing the name —
+      // the checkout-init case above.
+      if (a.governorateId != null && a.gov.trim().isEmpty) {
+        final g = areaCatalog.findGov(a.governorateId!);
+        if (g != null) a.gov = g.name;
+      }
+      if (a.governorateId != null && a.areaId != null && a.area.trim().isEmpty) {
+        final area = areaCatalog.findArea(a.areaId!);
+        if (area != null) a.area = area.name;
+      }
+      // Direction 2: have a real name, missing the id — the original case
+      // this method covered.
+      if (a.governorateId != null && a.areaId != null) continue;
+      final govName = a.gov.trim().toLowerCase();
+      final areaName = a.area.trim().toLowerCase();
+      if (govName.isEmpty && areaName.isEmpty) continue;
+      for (final g in areaCatalog.governorates) {
+        final govMatches = govName.isEmpty || g.name.toLowerCase() == govName || g.nameAr.toLowerCase() == govName;
+        if (!govMatches) continue;
+        a.governorateId ??= g.id;
+        if (areaName.isNotEmpty) {
+          for (final ar in g.areas) {
+            if (ar.name.toLowerCase() == areaName || ar.nameAr.toLowerCase() == areaName) {
+              a.areaId ??= ar.id;
+              break;
+            }
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  /// Re-checks [_preferSavedAddressForArea] after a fresh address list
+  /// arrives — covers the timing order where GPS already resolved to the
+  /// generic "Current location" entry BEFORE the address list finished
+  /// loading, so there was nothing to match against yet at that point.
+  /// Without this, that entry would keep showing for the rest of the
+  /// session even once a matching saved address becomes available, since
+  /// the retry logic that re-attempts [syncFromLocation] only fires while
+  /// [currentLocationAddress] is still null — which it no longer is once
+  /// set once, matched or not.
+  void _recheckCurrentLocationAgainstSavedAddresses() {
+    final loc = currentLocationAddress;
+    if (!useCurrentLocation || loc == null || loc.governorateId == null || loc.areaId == null) return;
+    _preferSavedAddressForArea(loc.governorateId!, loc.areaId!);
   }
 
   /// Feeds in addresses from another source that already fetched them
@@ -207,6 +323,8 @@ class AddressState extends ChangeNotifier {
     addresses.addAll(fetched);
     final defaultIdx = addresses.indexWhere((a) => a.isDefault);
     selectedIndex = defaultIdx >= 0 ? defaultIdx : 0;
+    resolveMissingAreaIds();
+    _recheckCurrentLocationAgainstSavedAddresses();
     notifyListeners();
   }
 
@@ -242,6 +360,8 @@ class AddressState extends ChangeNotifier {
           ..addAll(fetched);
         final defaultIdx = addresses.indexWhere((a) => a.isDefault);
         selectedIndex = defaultIdx >= 0 ? defaultIdx : 0;
+        resolveMissingAreaIds();
+        _recheckCurrentLocationAgainstSavedAddresses();
       }
     } catch (e) {
       addressesError = describeError(e);
@@ -254,15 +374,65 @@ class AddressState extends ChangeNotifier {
   /// Saves [address] to the server, then reflects it locally. Resolves the
   /// display gov/area names from [areaCatalog] so `address.formatted` reads
   /// correctly right away without waiting on a re-fetch.
+  /// [index] is no longer used — matching now happens by id against a
+  /// fresh reload of the whole list (see below), which is more reliable
+  /// than trusting a locally-passed index. Kept as a parameter only so the
+  /// existing call site (address_sheets.dart) doesn't need to change.
   Future<void> saveRemote(int userId, Address address, {int? index}) async {
     final gov = address.governorateId != null ? areaCatalog.findGov(address.governorateId!) : null;
     final area = address.areaId != null ? areaCatalog.findArea(address.areaId!) : null;
     if (gov != null) address.gov = gov.name;
     if (area != null) address.area = area.name;
 
-    final savedId = await _accountService.saveAddress(userId, address);
-    address.id = savedId;
-    upsert(address, index: index);
+    // The save endpoint's own response doesn't reliably return a usable id
+    // (unconfirmed field name — see AccountService.saveAddress's doc, and
+    // the bug this replaced: a brand-new address used to get added and
+    // selected locally with a genuinely null id whenever that response
+    // didn't have one). Rather than trust that response at all, reload the
+    // full list from the server — which DOES have real, confirmed ids for
+    // every entry — and match this address within it, so it always ends
+    // up with its real id regardless of what (if anything) the save call
+    // itself returned.
+    final wasNew = address.id == null;
+    final oldIds = wasNew ? addresses.map((a) => a.id).where((id) => id != null).toSet() : <int>{};
+    await _accountService.saveAddress(userId, address);
+    final fresh = await _accountService.addresses(userId);
+
+    Address? match;
+    if (wasNew) {
+      // The one id in the fresh list that wasn't in our old list is almost
+      // certainly the one we just added.
+      final candidates = fresh.where((a) => a.id != null && !oldIds.contains(a.id)).toList();
+      if (candidates.length == 1) {
+        match = candidates.first;
+      } else {
+        // More than one new id (a concurrent add from elsewhere?) or none
+        // at all — fall back to matching this address's own distinguishing
+        // fields instead.
+        for (final a in fresh) {
+          if (a.phone == address.phone && a.block == address.block && a.street == address.street && a.building == address.building) {
+            match = a;
+            break;
+          }
+        }
+      }
+    } else {
+      // Editing — the id is already known and doesn't change; just find
+      // that same entry in the fresh list.
+      match = fresh.firstWhere((a) => a.id == address.id, orElse: () => address);
+    }
+
+    if (match == null || match.id == null) {
+      throw ApiException.business('This address didn\'t save correctly — please try again.');
+    }
+
+    addresses
+      ..clear()
+      ..addAll(fresh);
+    final matchIndex = addresses.indexOf(match);
+    selectedIndex = matchIndex >= 0 ? matchIndex : addresses.length - 1;
+    resolveMissingAreaIds();
+    notifyListeners();
   }
 
   Future<void> deleteRemote(int userId, int index) async {

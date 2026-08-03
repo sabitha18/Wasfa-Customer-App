@@ -19,10 +19,10 @@ class AccountService {
     return WalletSummary.fromJson(res as Map<String, dynamic>);
   }
 
-  /// ✅ `GET /app/acct/rx?user_id=` is confirmed to exist as a distinct
-  /// endpoint in the updated Postman collection (see [ApiConfig.acctRxList]).
-  /// No saved example response yet though, so the exact shape below (bare
-  /// array vs wrapped under `rx`/`data`/`items`) is still a best-effort guess.
+  /// ✅ Confirmed live (2026-07-30): `GET /app/acct/rx?user_id=` returns a
+  /// bare array, not wrapped under `rx`/`data`/`items` — the fallback logic
+  /// below already handled this case correctly, this was just unconfirmed
+  /// until now.
   Future<List<Prescription>> prescriptions(int userId) async {
     final res = await _client.get(ApiConfig.acctRxList, query: {'user_id': userId});
     final list = (res is Map ? res['rx'] ?? res['data'] ?? res['items'] : null) ?? (res is List ? res : const []);
@@ -101,8 +101,17 @@ class AccountService {
   }
 
   /// `GET /app/checkout?user_id=` — confirmed live. See [CheckoutInitData].
-  Future<CheckoutInitData> checkoutInit(int userId) async {
-    final res = await _client.get(ApiConfig.checkoutInit, query: {'user_id': userId});
+  /// [prescriptionId] scopes this to one Rx checkout (confirmed needed,
+  /// 2026-08-01) — sends `is_rx=1` alongside `prescription_id` so the
+  /// response (delivery slots, summary, promotions) reflects just that
+  /// prescription's items, not the regular cart. `is_rx=0` (no
+  /// prescription_id) for the regular cart's own checkout, same as before.
+  Future<CheckoutInitData> checkoutInit(int userId, {String? prescriptionId}) async {
+    final res = await _client.get(ApiConfig.checkoutInit, query: {
+      'user_id': userId,
+      'is_rx': prescriptionId != null ? 1 : 0,
+      if (prescriptionId != null) 'prescription_id': prescriptionId,
+    });
     return CheckoutInitData.fromJson(res as Map<String, dynamic>);
   }
 

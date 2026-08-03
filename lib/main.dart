@@ -20,10 +20,27 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   // Must be registered before runApp — this is what lets a data message
-  // wake the app in the background/terminated state at all.
+  // wake the app in the background/terminated state at all. Registering
+  // the handler itself is cheap/synchronous — only the initialize() call
+  // below is what can actually hang.
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-  await NotificationService.instance.initialize();
   runApp(const WasfaApp());
+  // NOT awaited before runApp(): NotificationService.initialize() calls
+  // FirebaseMessaging.instance.requestPermission()/getInitialMessage(),
+  // both of which go through Google Play Services under the hood on
+  // Android. Most emulator images (anything not explicitly tagged "Google
+  // Play", just "Google APIs") don't have Play Services installed, and
+  // these calls can hang indefinitely with no exception, no timeout, and
+  // no log output at all when it's missing — this used to be awaited
+  // BEFORE runApp(), so that hang blocked Flutter from rendering anything
+  // whatsoever, showing as "stuck on splash" forever with nothing in
+  // logcat to explain why (a real device with Play Services, or a
+  // "Google Play" emulator image, never hit this). Runs in the background
+  // now — push notifications simply aren't wired up yet for the first
+  // moment or two the app is open, which is a fine tradeoff since the UI
+  // is fully usable immediately regardless of whether this ever
+  // completes.
+  NotificationService.instance.initialize();
 }
 
 class WasfaApp extends StatelessWidget {

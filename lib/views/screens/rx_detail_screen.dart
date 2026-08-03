@@ -14,14 +14,16 @@ import '../../state/cart_state.dart';
 import '../widgets/page_header.dart';
 import '../widgets/toast.dart';
 
-/// Matches `rRxDetail()` exactly — this page stays true to the HTML
-/// prototype's design, unlike the My Rx *list*, which now uses the real
-/// "Get Prices" action confirmed from the existing native app (see
-/// [Prescription.priceSubmitted]/[priceRequested]). That action only lives
-/// on the listing page; this page keeps the HTML's original binary
-/// priced/not-priced treatment — no "Get Prices" button here, and every
-/// non-priced item shows the same "Pharmacist is pricing — soon" message
-/// regardless of whether pricing has been requested yet or not.
+/// Confirmed against the reference web app (2026-07-30) rather than the
+/// original HTML prototype: a non-priced item shows nothing extra at all
+/// unless it's restricted or out of stock (checked independently of
+/// whether the prescription itself has been priced yet). Pricing status
+/// for the WHOLE prescription is a single card below the item list, not a
+/// banner repeated per item — "Price request sent" (isInReview, no button)
+/// or a "Request Price" prompt with its own button (isPending &&
+/// canRequestPrice). Neither shows at all when isPending &&
+/// !canRequestPrice (some pending prescriptions aren't eligible to request
+/// pricing — see [Prescription.canRequestPrice]'s doc).
 ///
 /// Restricted items are the one addition beyond the HTML itself (a
 /// separate, explicit client requirement, unrelated to either the HTML or
@@ -50,6 +52,7 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
   Prescription? _rx;
   bool _loading = true;
   String? _error;
+  bool _requesting = false;
 
   @override
   void initState() {
@@ -118,6 +121,39 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
     }
   }
 
+  /// Same action as the My Rx list's status-pill tap (see
+  /// `_RxCardState._requestPrices` in my_rx_screen.dart) — kept as its own
+  /// copy here rather than shared, since that one updates a list card's
+  /// local state and this one updates this screen's `_rx`/`_requesting`.
+  /// Only ever reachable while `rx.isPending && rx.canRequestPrice` (see
+  /// the Request Price card in [build]), so there's no risk of
+  /// double-requesting an already-requested rx.
+  Future<void> _requestPrices(BuildContext context) async {
+    final rx = _rx;
+    if (rx == null) return;
+    final auth = context.read<AuthState>();
+    if (auth.userId == null) return;
+    if (rx.id.isEmpty) {
+      showErrorToast(context, 'This prescription is missing its id — can\'t request pricing yet.');
+      return;
+    }
+    setState(() => _requesting = true);
+    try {
+      await AccountService.instance.requestPricing(auth.userId!, rx.id);
+      final fresh = await AccountService.instance.prescriptionDetail(auth.userId!, rx.id);
+      CatalogRepository.instance.upsertPrescription(fresh);
+      if (!mounted) return;
+      setState(() {
+        _rx = fresh;
+        _requesting = false;
+      });
+      if (context.mounted) showToast(context, 'Prices requested');
+    } catch (e) {
+      if (mounted) setState(() => _requesting = false);
+      if (context.mounted) showErrorToast(context, describeError(e));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final rx = _rx;
@@ -130,16 +166,16 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
       );
     }
 
-    // Whether there's at least one non-restricted item with real seller/
-    // price data — decides whether "Add all to RX cart" has anything to
-    // actually add. Deliberately does NOT also require rx.isPriced: that
+    // Whether there's at least one non-restricted, IN-STOCK item with real
+    // seller/price data — decides whether "Add all to RX cart" has anything
+    // to actually add. Deliberately does NOT also require rx.isPriced: that
     // flag's field name was confirmed from a different endpoint (the
     // existing native app's RX *cart list*), not this prescription detail
     // endpoint — if this endpoint doesn't send the same field, isPriced
     // would always read false even when individual items clearly do have
     // real pricing already. Trusting each item's own `sellers` data is more
     // robust than depending on a status flag that may not even apply here.
-    final hasAddableItems = rx.isPriced && rx.items.any((it) => it.sellers.isNotEmpty && !it.restricted);
+    final hasAddableItems = rx.isPriced && rx.items.any((it) => it.sellers.isNotEmpty && !it.restricted && it.sellers.any((s) => s.stock));
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -185,9 +221,69 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
               padding: EdgeInsets.symmetric(horizontal: 16),
               child: Text('No items have been added to this prescription yet.', style: TextStyle(color: AppColors.muted, fontSize: 12.5)),
             )
-          else
+          else ...[
             for (var i = 0; i < rx.items.length; i++)
               _RxItemCard(rx: rx, index: i, onAdd: () => _addItem(context, cart, rx, i)),
+            if (rx.isInReview)
+              // ── Matches the reference web app exactly (2026-07-30):
+              // ONE card below the whole item list, not a banner repeated
+              // on every individual item.
+              Container(
+                margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: AppColors.shSm),
+                child: const Column(
+                  children: [
+                    Text('⏳', style: TextStyle(fontSize: 32)),
+                    SizedBox(height: 10),
+                    Text('Price request sent', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: AppColors.navy)),
+                    SizedBox(height: 6),
+                    Text(
+                      'Our pharmacist is reviewing your prescription and will submit pricing shortly.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12.5, color: AppColors.muted),
+                    ),
+                  ],
+                ),
+              )
+            else if (rx.isPending && rx.canRequestPrice)
+              // ── Different card from isInReview above — this one has the
+              // actual "Request Price" button in it (matches the
+              // reference: the button lives in the scrollable body, not
+              // pinned to a bottom dock), and different copy — this Rx
+              // hasn't been requested yet at all, so it reads as an
+              // available speed-up action rather than a "already sent,
+              // just wait" confirmation.
+              Container(
+                margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: AppColors.shSm),
+                child: Column(
+                  children: [
+                    const Text(
+                      'Your prescription is under pharmacist review. Request pricing to speed up the process.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12.5, color: AppColors.muted),
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.sky,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          elevation: 0,
+                        ),
+                        onPressed: _requesting ? null : () => _requestPrices(context),
+                        child: Text(_requesting ? 'Requesting…' : 'Request Price', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
         ],
       ),
       bottomNavigationBar: _buildDock(context, cart, rx, hasAddableItems),
@@ -220,9 +316,12 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
         ),
       );
     }
-    // Not priced, or priced but nothing addable (e.g. every item is
-    // restricted) — matches the HTML's dock exactly, which only ever
-    // shows anything when `rx.status === 'priced'`.
+    // Pending+canRequestPrice now has its own in-body card with the
+    // Request Price button inside it (matches the reference exactly — see
+    // the Column above), not a bottom dock button. isInReview shows its
+    // own card too, no button. Priced-but-nothing-addable (e.g. every item
+    // restricted) also falls through to no dock — matches the HTML's dock,
+    // which otherwise only ever shows anything when priced.
     return null;
   }
 
@@ -239,6 +338,7 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
     if (item.restricted) return; // restricted items can never be added — pickup only
     final seller = _sellerFor(item);
     if (seller == null) return; // no seller available for this item — nothing to add
+    if (!seller.stock) return; // out of stock — matches the UI, which doesn't show an Add button for this case at all
     if (item.id.isEmpty) {
       showErrorToast(context, 'This item is missing an id — can\'t add it to your Rx cart yet.');
       return;
@@ -261,10 +361,15 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
         apiProductId: seller.productId,
         seller: seller.name,
         price: seller.price,
+        // Doctor's actual prescribed dispense quantity (confirmed live
+        // `quantity` on the prescription's own item — distinct from dosage)
+        // instead of always starting at 1 regardless of what was prescribed.
+        qty: (item.prescribedQty != null && item.prescribedQty! > 0) ? item.prescribedQty! : 1,
         rxId: rx.id,
         nameOverride: item.name,
         nameOverrideAr: item.nameAr,
         emojiOverride: item.emoji,
+        inStock: seller.stock,
       );
       cart.notifyListeners();
       if (context.mounted) showToast(context, 'Added to Rx cart');
@@ -287,7 +392,10 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
     final eligible = <MapEntry<int, RxItem>>[];
     for (var i = 0; i < rx.items.length; i++) {
       final it = rx.items[i];
-      if (rx.isPriced && it.sellers.isNotEmpty && it.id.isNotEmpty && !it.restricted) eligible.add(MapEntry(i, it));
+      if (rx.isPriced && it.sellers.isNotEmpty && it.id.isNotEmpty && !it.restricted) {
+        final seller = _sellerFor(it);
+        if (seller != null && seller.stock) eligible.add(MapEntry(i, it));
+      }
     }
     if (eligible.isEmpty) return;
 
@@ -304,10 +412,12 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
           apiProductId: seller.productId,
           seller: seller.name,
           price: seller.price,
+          qty: (item.prescribedQty != null && item.prescribedQty! > 0) ? item.prescribedQty! : 1,
           rxId: rx.id,
           nameOverride: item.name,
           nameOverrideAr: item.nameAr,
           emojiOverride: item.emoji,
+          inStock: seller.stock,
         );
       }
       cart.setCartTab('rx');
@@ -385,7 +495,14 @@ class _RxItemCard extends StatelessWidget {
     // prescription itself must be marked priced, AND this item must
     // actually have sellers.
     final priced = rx.isPriced && item.sellers.isNotEmpty;
-    final sel = priced ? _sellerFor(item) : null;
+    // Stock is checked independent of [priced] — confirmed against the
+    // reference web app (2026-07-30): a prescription still in "Pharmacist
+    // Review" (not yet priced at all) already shows "Out of stock" on a
+    // specific item, since availability doesn't depend on final pricing
+    // being submitted. [sel] is used for the actual price/Add row only
+    // when [priced] is also true, further down.
+    final stockSel = item.sellers.isNotEmpty ? _sellerFor(item) : null;
+    final sel = priced ? stockSel : null;
     final restricted = item.restricted;
 
     return Container(
@@ -445,6 +562,46 @@ class _RxItemCard extends StatelessWidget {
               child: const Text('Restricted · Pickup Only', textAlign: TextAlign.center,
                   style: TextStyle(color: AppColors.rose, fontSize: 12, fontWeight: FontWeight.w700)),
             )
+          else if (!restricted && stockSel != null && !stockSel.stock) ...[
+            // ── Out of stock — the only/best-priced seller for this item
+            // has no stock (see _sellerFor's fallback: it picks the
+            // cheapest in-stock seller, but falls back to the first
+            // seller at all if NONE are in stock, so this case is real,
+            // not hypothetical). Amber, not pink — confirmed against the
+            // reference web app, which uses a distinct color from
+            // "Restricted" for this.
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: const Color(0xFFFFF4E0), borderRadius: BorderRadius.circular(10)),
+              child: const Text('⚠ Out of stock', textAlign: TextAlign.center,
+                  style: TextStyle(color: Color(0xFFB8720A), fontSize: 12, fontWeight: FontWeight.w700)),
+            ),
+            if (priced) ...[
+              // Confirmed against a real "Price Submitted" prescription
+              // (2026-07-31) — once pricing has actually been submitted,
+              // the seller/price row still shows below the pill (useful to
+              // know what it'll cost once back in stock), just never with
+              // an Add button. Before pricing is submitted there's nothing
+              // meaningful to show yet regardless, so this stays pill-only
+              // in that case (matches an earlier confirmed example where
+              // an out-of-stock item on a still-"Pharmacist Review"
+              // prescription showed no price row at all).
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF2FAFE),
+                  border: Border.all(color: AppColors.sky, width: 1.5),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: Row(children: [
+                  Expanded(child: Text(stockSel.name, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.ink))),
+                  Text(Formatters.money(stockSel.price), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.navy)),
+                ]),
+              ),
+            ],
+          ]
           else if (priced && sel != null) ...[
             // ── .ri-sellers .srow.sm.on — ONE non-interactive row showing
             // the auto-picked seller (cursor:default in the HTML — this is
@@ -484,18 +641,15 @@ class _RxItemCard extends StatelessWidget {
                 ),
               ),
             ),
-          ] else
-            // ── .rx-soon — matches the HTML exactly: same message
-            // regardless of whether pricing has been requested yet or not.
-            // The pending/requested distinction only matters on the
-            // listing page's "Get Prices" flow, not here.
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: AppColors.blush, borderRadius: BorderRadius.circular(10)),
-              child: const Text('Pharmacist is pricing — soon', textAlign: TextAlign.center,
-                  style: TextStyle(color: AppColors.rose, fontSize: 12, fontWeight: FontWeight.w600)),
-            ),
+          ],
+          // Normal item, not yet priced (pending or in-review), not
+          // restricted, in stock: shows nothing extra here at all —
+          // confirmed against the reference web app. The old per-item
+          // "Pharmacist is pricing — soon" / "Not priced yet" banners are
+          // gone; isInReview's equivalent is now the single aggregate
+          // "Price request sent" card below the whole item list (see
+          // _PriceRequestSentCard, added once per prescription, not once
+          // per item).
         ],
       ),
     );

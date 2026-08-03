@@ -36,6 +36,14 @@ class RxItem {
   /// two field names for the same purpose.
   final int? cartId;
   final int? cartQuantity;
+  /// Confirmed live (`quantity`, 2026-07-30) — the doctor's actual
+  /// prescribed dispense quantity (e.g. "2" bottles), distinct from
+  /// [dosage] (how much to take PER DOSE, e.g. "4" tablets) and from
+  /// [cartQuantity] (how many are currently in the Rx CART, a different
+  /// endpoint entirely). Not yet used anywhere — rx_detail_screen.dart's
+  /// add-to-cart flow always starts a freshly-added line at qty 1
+  /// regardless of this; worth using it as the initial quantity instead.
+  final int? prescribedQty;
 
   RxItem({
     required this.id,
@@ -52,6 +60,7 @@ class RxItem {
     this.restricted = false,
     this.cartId,
     this.cartQuantity,
+    this.prescribedQty,
   });
 
   String displayName(bool arabic) => arabic ? nameAr : name;
@@ -108,6 +117,7 @@ class RxItem {
       restricted: asBool(json, const ['restricted', 'is_restricted', 'pickup_only']),
       cartId: asIntOrNull(json, const ['cart_id']),
       cartQuantity: asIntOrNull(json, const ['quantity']),
+      prescribedQty: asIntOrNull(json, const ['quantity']),
     );
   }
 }
@@ -126,14 +136,39 @@ class Prescription {
   final String note;
   /// Confirmed from the existing native app's real fields (both come back
   /// as the strings "1"/"0", not real booleans): `request_price_submitted`
-  /// and `price_request`. Exactly 3 states, matching the client's own
-  /// wording precisely — no "pending"/"pharmacist review"/"ordered" labels:
-  /// - neither set → "Get Prices" (an action, not just a label — tapping it
-  ///   calls [AccountService.requestPricing])
-  /// - priceRequested only → "Prices Requested"
+  /// and `price_request`. Exactly 3 states:
+  /// - neither set → "Pending" (a passive status pill; "Request Price" is
+  ///   a separate button shown alongside it when [canRequestPrice] is also
+  ///   true — tapping it calls [AccountService.requestPricing])
+  /// - priceRequested only → "Pharmacist Review"
   /// - priceSubmitted → "Price Submitted" (sellers/pricing now available)
   final bool priceSubmitted;
   final bool priceRequested;
+  /// Confirmed live (2026-07-30) — an EXPLICIT signal for whether price
+  /// requesting is even offered for this prescription, distinct from
+  /// [priceRequested] (whether one has already been made). Confirmed
+  /// against a real response where the two disagreed in a way pure
+  /// pending/requested logic can't explain: one entry had
+  /// `price_request: 1` (already requested) yet `can_request_price: true`,
+  /// while several entries with `price_request: 0` (never requested) had
+  /// `can_request_price: false` — so this isn't simply "hasn't been
+  /// requested yet," it's the server's own authoritative answer to "is
+  /// this prescription even eligible to have prices requested," gating
+  /// [isPending]'s dock button/status-pill action on top of the existing
+  /// checks rather than replacing them. The exact rule behind why some
+  /// otherwise-normal-looking prescriptions come back false isn't fully
+  /// clear from that one sample — trusting the server's own flag here
+  /// rather than guessing at the rule.
+  final bool canRequestPrice;
+  /// The server's own status text/code (e.g. "Pending", "Pharmacist
+  /// Review") — confirmed live, currently only kept for reference/future
+  /// use since [statusLabel] already derives an equivalent label from
+  /// [priceSubmitted]/[priceRequested] that matches the client's exact
+  /// wording. If a genuinely different status ever shows up here (e.g.
+  /// something indicating this Rx is actually already an order, not
+  /// awaiting pricing at all), [statusRaw] is where it would appear.
+  final String statusText;
+  final int? statusRaw;
   final List<RxItem> items;
 
   const Prescription({
@@ -146,6 +181,9 @@ class Prescription {
     this.note = '',
     required this.priceSubmitted,
     required this.priceRequested,
+    this.canRequestPrice = true,
+    this.statusText = '',
+    this.statusRaw,
     required this.items,
   });
 
@@ -153,14 +191,17 @@ class Prescription {
   bool get isPending => !priceSubmitted && !priceRequested;
   bool get isInReview => !priceSubmitted && priceRequested;
 
-  /// Exactly the client's 3 labels — "Get Prices" doubles as the action
-  /// button's own text where this is shown as a tappable element (the My Rx
-  /// list card's status pill, and the detail page's dock button), not just
-  /// a passive status word like the other two.
+  /// Confirmed against the reference web app (2026-07-30): the status pill
+  /// itself always reads "Pending"/"Pharmacist Review"/"Price Submitted" —
+  /// "Get Prices"/"Request Price" is a completely separate button shown
+  /// alongside it (see my_rx_screen.dart/rx_detail_screen.dart), not this
+  /// label's own text. This used to double as the action button's text
+  /// when tappable, which doesn't match how the reference actually works —
+  /// the pill is never itself the button.
   String get statusLabel {
     if (isPriced) return 'Price Submitted';
-    if (isInReview) return 'Prices Requested';
-    return 'Get Prices';
+    if (isInReview) return 'Pharmacist Review';
+    return 'Pending';
   }
 
   /// Joins doctor + specialty — matches the existing native app's exact
@@ -190,6 +231,9 @@ class Prescription {
         note: asString(json, const ['note', 'prescription_note', 'notes', 'instructions']),
         priceSubmitted: asString(json, const ['request_price_submitted']) == '1',
         priceRequested: asString(json, const ['price_request']) == '1',
+        canRequestPrice: json.containsKey('can_request_price') ? asBool(json, const ['can_request_price'], fallback: true) : true,
+        statusText: asString(json, const ['status']),
+        statusRaw: asIntOrNull(json, const ['status_raw']),
         items: asList(json, const ['items']).map((e) => RxItem.fromJson(e as Map<String, dynamic>)).toList(),
       );
 }

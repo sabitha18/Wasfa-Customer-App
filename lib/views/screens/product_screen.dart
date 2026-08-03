@@ -77,6 +77,18 @@ class _ProductBody extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (p.isBogo)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                      decoration: BoxDecoration(color: AppColors.rose, borderRadius: BorderRadius.circular(20)),
+                      child: Text(
+                        p.bogoDisplayLabel!,
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white),
+                      ),
+                    ),
+                  ),
                 Text(p.brand.toUpperCase(), style: const TextStyle(color: AppColors.sky, fontWeight: FontWeight.w700, fontSize: 11)),
                 const SizedBox(height: 4),
                 Text(p.nameEn, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.navy)),
@@ -272,7 +284,7 @@ class _ProductBody extends StatelessWidget {
             onPressed: !sel.stock
                 ? null
                 : () {
-                    cart.addToCartRemote(context, p, seller: sel.name, price: sel.price, was: sel.was, apiProductId: sel.productId);
+                    cart.addToCartRemote(context, p, seller: sel.name, price: sel.price, was: sel.was, apiProductId: sel.productId, inStock: sel.stock);
                     showToast(
                       context,
                       'Added to cart',

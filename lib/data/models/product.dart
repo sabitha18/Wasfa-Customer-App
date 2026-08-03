@@ -37,7 +37,18 @@ class Product {
   final double rating;
   final int reviews;
   final List<String> flags; // offer, best, new
+  /// Guessed field names (`tag`/`promo_tag`) that never actually matched a
+  /// real response — kept only for [isBogo]'s fallback and any content
+  /// that already set this directly (e.g. the Rx flow's synthesized
+  /// entries). [bogoStatus]/[bogoLabel] below are the confirmed-live
+  /// fields; prefer those.
   final String? tag; // "1+1"
+  /// Confirmed live on `/app/products` (2026-07-29): whether this exact
+  /// product+seller row is a real "Buy 1 Get 1" (or similar) promotion,
+  /// and the exact label the backend wants shown for it (e.g. "Buy 1 Get
+  /// 1") — NOT a guess like [tag] was. See [isBogo]/[bogoDisplayLabel].
+  final bool bogoStatus;
+  final String? bogoLabel;
   /// The dashboard's product "tags" field — confirmed by the client as the
   /// actual intended source for the PDP's "Key benefits" chips (e.g. "Female
   /// care"). This is distinct from [flags] ('offer'/'best'/'new' — UI
@@ -53,6 +64,13 @@ class Product {
   /// merely present.
   final bool wishlistStatus;
   final bool cartStatus;
+  /// Real quantity already in this signed-in person's cart for this exact
+  /// product+seller row — confirmed added by the backend team alongside
+  /// `cart_status` (2026-07-29). Null on any response that predates this
+  /// field; [CartState.syncQtyFromListing] falls back to a 1-unit guess
+  /// from [cartStatus] only in that case. Once this is reliably present,
+  /// [cartStatus] itself becomes redundant (kept for now, harmless).
+  final int? cartQty;
   final bool offerStatus;
   final int? discountPct;
 
@@ -75,10 +93,13 @@ class Product {
     required this.reviews,
     this.flags = const [],
     this.tag,
+    this.bogoStatus = false,
+    this.bogoLabel,
     this.tags = const [],
     required this.sellers,
     this.wishlistStatus = false,
     this.cartStatus = false,
+    this.cartQty,
     this.offerStatus = false,
     this.discountPct,
   });
@@ -103,7 +124,12 @@ class Product {
   /// identifiers; there's no one universal rule here.)
   String get pdpIdentifier => sku.isNotEmpty ? sku : (apixSku.isNotEmpty ? apixSku : id.toString());
   bool get isNew => flags.contains('new');
-  bool get isBogo => tag == '1+1';
+  bool get isBogo => bogoStatus || tag == '1+1';
+  /// What the badge/label should actually say — the backend's own
+  /// [bogoLabel] when present, falling back to a generic "Buy 1 Get 1"
+  /// only if [bogoStatus] is true but the label itself is missing for some
+  /// reason.
+  String? get bogoDisplayLabel => isBogo ? (bogoLabel ?? 'Buy 1 Get 1') : null;
 
   /// Lowest in-stock price across sellers (falls back to any seller).
   double get bestPrice {
@@ -148,8 +174,9 @@ class Product {
   /// PLP item: confirmed live shape includes `product_id`, `sku`,
   /// `apix_sku`, `name`, `name_ar`, `brand`, `category`, `image`, `price`,
   /// `seller_count`, `pharmacy_name`, `wishlist_status`, `cart_status`,
-  /// `in_stock`, `rating`, `unit`, `min_qty`, `compare_price`,
-  /// `offer_status`, `discount_pct` — each PLP row is already scoped to one
+  /// `cart_qty`, `bogo_status`, `bogo_label`, `in_stock`, `rating`, `unit`,
+  /// `min_qty`, `compare_price`, `offer_status`, `discount_pct` — each PLP
+  /// row is already scoped to one
   /// specific seller's listing (hence `pharmacy_name`/`price` sitting at
   /// the top level, not nested); `seller_count` just hints there may be
   /// more sellers to see via the PDP, which is where a real `sellers[]`
@@ -201,6 +228,8 @@ class Product {
       reviews: asInt(json, const ['reviews', 'reviews_count']),
       flags: asList(json, const ['flags']).map((e) => e.toString()).toList(),
       tag: asStringOrNull(json, const ['tag', 'promo_tag']),
+      bogoStatus: asBool(json, const ['bogo_status']),
+      bogoLabel: asStringOrNull(json, const ['bogo_label']),
       // Dashboard-authored "tags" field driving the PDP's "Key benefits"
       // chips — field name is a best guess ('tags') per the client's
       // description; confirm against a real response and adjust if the
@@ -209,6 +238,7 @@ class Product {
       sellers: sellers,
       wishlistStatus: asBool(json, const ['wishlist_status']),
       cartStatus: asBool(json, const ['cart_status']),
+      cartQty: asIntOrNull(json, const ['cart_qty']),
       offerStatus: asBool(json, const ['offer_status']),
       discountPct: asIntOrNull(json, const ['discount_pct']),
     );

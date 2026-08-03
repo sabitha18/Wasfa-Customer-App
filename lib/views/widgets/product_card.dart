@@ -20,17 +20,32 @@ class ProductCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cart = context.watch<CartState>();
+    // context.read, not watch — this card only needs to *call* CartState's
+    // methods here (toggleWishRemote, addToCartRemote, etc.); the actual
+    // reactive pieces it displays (wished/qty/syncing) are each pulled with
+    // context.select below instead. A previous `context.watch<CartState>()`
+    // here meant EVERY ProductCard in the shop grid rebuilt on ANY cart or
+    // wishlist change anywhere (notifyListeners() doesn't know which key
+    // changed) — on a 48-product grid, one tap on one product's stepper
+    // was rebuilding all 48 cards, which on a slower device shows up as the
+    // +/- buttons feeling laggy or unresponsive. context.select rebuilds
+    // only the cards whose selected value actually changed.
+    final cart = context.read<CartState>();
     final locale = context.watch<LocaleState>();
-    final wished = cart.isWishedOrFallback(product.id, product.wishlistStatus);
+    final wished = context.select<CartState, bool>(
+      (c) => c.isWishedOrFallback(product.id, product.wishlistStatus),
+    );
     final price = product.bestPrice;
     final was = product.bestWasPrice;
 
     String? badgeText;
     Color badgeColor = AppColors.rose;
-    if (product.tag != null) {
-      badgeText = product.tag;
-      badgeColor = AppColors.blush;
+    if (product.isBogo) {
+      // Real field now (bogo_status/bogo_label, confirmed 2026-07-29) —
+      // solid rose fill + white text, same visual weight as "New" below,
+      // not the lighter blush tint used for a plain discount %.
+      badgeText = product.bogoDisplayLabel;
+      badgeColor = AppColors.rose;
     } else if (was != null) {
       final off = (100 - (price / was * 100)).round();
       badgeText = '-$off%';
@@ -173,14 +188,27 @@ class ProductCard extends StatelessWidget {
                   const SizedBox(height: 5),
                   Builder(builder: (context) {
                     final s = product.defaultSeller;
-                    final key = '${product.id}_${s.name}';
-                    // Deferred to after this frame — seeding (if it does
-                    // anything at all) calls notifyListeners, which
-                    // shouldn't happen synchronously mid-build.
+                    // Canonical key — MUST match CartState.lineKey exactly,
+                    // or a real synced cart line (from loadCartRemote) and
+                    // this lookup silently diverge.
+                    final key = CartState.lineKey(apiProductId: s.productId, productId: product.id, seller: s.name);
+                    // Deferred to after this frame since syncQtyFromListing
+                    // can call notifyListeners, which shouldn't happen
+                    // synchronously mid-build. Safe to call every build —
+                    // it's a no-op once local qty already matches.
                     WidgetsBinding.instance.addPostFrameCallback((_) {
-                      cart.seedCartStatusOnce(product, seller: s.name, price: s.price, was: s.was, apiProductId: s.productId, cartStatus: product.cartStatus);
+                      cart.syncQtyFromListing(
+                        product,
+                        seller: s.name,
+                        price: s.price,
+                        was: s.was,
+                        apiProductId: s.productId,
+                        qty: product.cartQty ?? (product.cartStatus ? 1 : 0),
+                        inStock: s.stock,
+                      );
                     });
-                    final qty = cart.cart[key]?.qty ?? 0;
+                    final qty = context.select<CartState, int>((c) => c.cart[key]?.qty ?? 0);
+                    final syncing = context.select<CartState, bool>((c) => c.isSyncingCart(key));
                     final outOfStock = !s.stock;
                     if (qty > 0) {
                       // .qstep — full-width stepper replaces the button entirely once in cart.
@@ -194,12 +222,33 @@ class ProductCard extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             StepBtn(icon: Icons.remove_rounded, onTap: () => cart.setQtyRemote(context, key, -1)),
-                            Text('$qty', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text('$qty', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                                // .qsync — tiny, non-blocking: reflects that
+                                // this line's server sync is still in
+                                // flight (debounced, so it lags a tap by
+                                // ~500ms). Never disables the +/- buttons;
+                                // it's status, not a gate.
+                                if (syncing) ...[
+                                  const SizedBox(width: 5),
+                                  SizedBox(
+                                    width: 10,
+                                    height: 10,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 1.6,
+                                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white.withOpacity(.85)),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
                             StepBtn(
                               icon: Icons.add_rounded,
                               onTap: outOfStock
                                   ? null
-                                  : () => cart.addToCartRemote(context, product, seller: s.name, price: s.price, was: s.was, apiProductId: s.productId),
+                                  : () => cart.addToCartRemote(context, product, seller: s.name, price: s.price, was: s.was, apiProductId: s.productId, inStock: s.stock),
                             ),
                           ],
                         ),
@@ -226,7 +275,7 @@ class ProductCard extends StatelessWidget {
                       width: double.infinity,
                       child: ElevatedButton(
                         onPressed: () {
-                          cart.addToCartRemote(context, product, seller: s.name, price: s.price, was: s.was, apiProductId: s.productId);
+                          cart.addToCartRemote(context, product, seller: s.name, price: s.price, was: s.was, apiProductId: s.productId, inStock: s.stock);
                           showToast(context, locale.isArabic ? 'أُضيف للسلة' : 'Added to cart');
                         },
                         style: ElevatedButton.styleFrom(
@@ -262,9 +311,15 @@ class StepBtn extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
+      // Opaque, not the default deferToChild-ish behavior a bare
+      // GestureDetector effectively gets from an undecorated child — this
+      // guarantees every tap within the box below is claimed here, rather
+      // than occasionally falling through to the card's own outer tap
+      // handler (which opens product details) underneath it.
+      behavior: HitTestBehavior.opaque,
       child: Container(
-        width: 26,
-        height: 26,
+        width: 34,
+        height: 34,
         alignment: Alignment.center,
         child: Icon(icon, color: onTap == null ? Colors.white.withOpacity(.4) : Colors.white, size: 16),
       ),

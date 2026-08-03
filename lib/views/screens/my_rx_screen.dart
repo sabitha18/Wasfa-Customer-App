@@ -201,10 +201,9 @@ class _RxCardState extends State<_RxCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── .rxtop — badge + id/date, status pill — tapping this (not
           // ── .rxtop — badge + id/date (tap navigates to detail); status
-          // pill is separate — when pending, it's the "Get Prices" action
-          // itself, tappable right here without navigating anywhere ──
+          // pill is always passive — "Request Price" is a separate button
+          // shown alongside it, not the pill itself ──
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, crossAxisAlignment: CrossAxisAlignment.start, children: [
             GestureDetector(
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => RxDetailScreen(rxId: rx.id))),
@@ -222,24 +221,47 @@ class _RxCardState extends State<_RxCard> {
                 ]),
               ]),
             ),
-            GestureDetector(
-              onTap: rx.isPending && !_requesting ? () => _requestPrices(context, rx) : null,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: rx.isPriced ? const Color(0xFFE8F5FC) : (rx.isPending ? AppColors.navy : AppColors.blush),
-                  borderRadius: BorderRadius.circular(9),
-                ),
-                child: Text(
-                  rx.isPending && _requesting ? 'Requesting…' : rx.statusLabel,
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    color: rx.isPriced ? AppColors.sky : (rx.isPending ? Colors.white : AppColors.rose),
+            // Confirmed against the reference web app (2026-07-30): the
+            // status pill is ALWAYS passive — Pending (gray), Pharmacist
+            // Review (amber), Price Submitted (mint-green) — never itself
+            // tappable. "Request Price" is a completely separate button
+            // underneath it, shown only when rx.isPending &&
+            // rx.canRequestPrice (some pending prescriptions don't offer
+            // this at all — see Prescription.canRequestPrice's doc).
+            Builder(builder: (context) {
+              final canAsk = rx.isPending && rx.canRequestPrice;
+              return Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: rx.isPriced ? const Color(0xFFE3F5EA) : (rx.isInReview ? const Color(0xFFFFF1DC) : AppColors.blush),
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: Text(
+                    rx.statusLabel,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: rx.isPriced ? AppColors.ok : (rx.isInReview ? const Color(0xFFB8720A) : AppColors.rose),
+                    ),
                   ),
                 ),
-              ),
-            ),
+                if (canAsk) ...[
+                  const SizedBox(height: 6),
+                  GestureDetector(
+                    onTap: _requesting ? null : () => _requestPrices(context, rx),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(color: AppColors.sky, borderRadius: BorderRadius.circular(9)),
+                      child: Text(
+                        _requesting ? 'Requesting…' : 'Request Price',
+                        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ],
+              ]);
+            }),
           ]),
           const SizedBox(height: 9),
           GestureDetector(

@@ -70,6 +70,27 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           if (_error != null) InlineErrorBanner(message: _error!, onRetry: _load),
+          // A cached summary (e.g. from the Orders list, already in
+          // OrdersState before this screen even opened) shows immediately
+          // — good for perceived speed, but it meant the full-detail fetch
+          // that follows had NO visible loading indicator at all: the
+          // full-screen LoadingView above only fires when there's no
+          // cached order yet, so opening any order you'd already seen on
+          // the list just silently showed the (possibly lighter/stale)
+          // cached summary with nothing to indicate a fresher fetch was
+          // even happening in the background.
+          if (_loading)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Row(children: [
+                const SizedBox(
+                  width: 14, height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation<Color>(AppColors.sky)),
+                ),
+                const SizedBox(width: 8),
+                Text('Refreshing…', style: const TextStyle(fontSize: 12, color: AppColors.muted, fontWeight: FontWeight.w600)),
+              ]),
+            ),
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(order.id, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
@@ -144,6 +165,19 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                                   child: const Text('Restricted · Pickup Only', style: TextStyle(color: AppColors.rose, fontSize: 10, fontWeight: FontWeight.w700)),
                                 ),
                               ],
+                              if (!it.restricted && !it.inStock) ...[
+                                // Confirmed live (`in_stock`) across product/cart/
+                                // order/rx responses (2026-07-29). This order's own
+                                // line is already fulfilled regardless — this only
+                                // means reordering it specifically isn't offered
+                                // (see OrdersState.reorderInto, which now skips it).
+                                const SizedBox(height: 3),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                  decoration: BoxDecoration(color: AppColors.blush, borderRadius: BorderRadius.circular(6)),
+                                  child: const Text('Out of stock', style: TextStyle(color: AppColors.rose, fontSize: 10, fontWeight: FontWeight.w700)),
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -153,10 +187,72 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 ],
               ),
             ),
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            const Text('Items total', style: TextStyle(fontSize: 14, color: AppColors.navy)),
-            Text(Formatters.money(order.total), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17, color: AppColors.navy)),
-          ]),
+          Builder(builder: (context) {
+            // "Items total" used to just show order.total directly — which
+            // already includes delivery and any discount, so the label was
+            // wrong regardless. Now a real breakdown, using delivery_charge
+            // and discount (confirmed live, 2026-07-31, neither parsed
+            // before this).
+            final subtotal = order.allItems.fold(0.0, (s, it) => s + it.price * it.qty);
+            return Column(children: [
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                const Text('Subtotal', style: TextStyle(fontSize: 13, color: AppColors.muted)),
+                Text(Formatters.money(subtotal), style: const TextStyle(fontSize: 13, color: AppColors.ink)),
+              ]),
+              const SizedBox(height: 4),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                const Text('Delivery', style: TextStyle(fontSize: 13, color: AppColors.muted)),
+                Text(order.deliveryCharge == 0 ? 'Free' : Formatters.money(order.deliveryCharge), style: const TextStyle(fontSize: 13, color: AppColors.ink)),
+              ]),
+              if (order.discount > 0) ...[
+                const SizedBox(height: 4),
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  const Text('Discount', style: TextStyle(fontSize: 13, color: AppColors.muted)),
+                  Text('−${Formatters.money(order.discount)}', style: const TextStyle(fontSize: 13, color: AppColors.rose, fontWeight: FontWeight.w700)),
+                ]),
+              ],
+              const SizedBox(height: 4),
+              // Confirmed live (payment_method/payment_type, 2026-07-31) —
+              // never shown anywhere before this.
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                const Text('Payment', style: TextStyle(fontSize: 13, color: AppColors.muted)),
+                Row(children: [
+                  Text(order.payLabel, style: const TextStyle(fontSize: 13, color: AppColors.ink)),
+                  if (order.paymentStatus != null) ...[
+                    const SizedBox(width: 5),
+                    Text(
+                      '· ${order.paymentStatus == 'paid' ? 'Paid' : 'Unpaid'}',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: order.paymentStatus == 'paid' ? AppColors.ok : AppColors.rose),
+                    ),
+                  ],
+                ]),
+              ]),
+              const SizedBox(height: 8),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                const Text('Total', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.navy)),
+                Text(Formatters.money(order.total), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17, color: AppColors.navy)),
+              ]),
+            ]);
+          }),
+          if (order.deliveryAddress != null) ...[
+            const SizedBox(height: 16),
+            // The delivery address embedded directly on this order's own
+            // response (confirmed live, 2026-07-31) — a snapshot of where
+            // it was actually sent, never shown anywhere before this.
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: AppColors.shSm),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Delivered to', style: TextStyle(fontSize: 12, color: AppColors.muted, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 6),
+                Text(order.deliveryAddress!.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5, color: AppColors.navy)),
+                const SizedBox(height: 2),
+                Text(order.deliveryAddress!.formatted, style: const TextStyle(fontSize: 12.5, color: AppColors.ink, height: 1.4)),
+                const SizedBox(height: 2),
+                Text(order.deliveryAddress!.phone, style: const TextStyle(fontSize: 12.5, color: AppColors.muted)),
+              ]),
+            ),
+          ],
           for (final entry in order.cancelStatusGroups.entries)
             _RequestBanner(label: 'Cancellation request (${entry.value.length} item${entry.value.length == 1 ? '' : 's'})', status: entry.key),
           for (final entry in order.returnStatusGroups.entries)

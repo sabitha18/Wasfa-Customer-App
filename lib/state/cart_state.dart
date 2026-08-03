@@ -41,45 +41,158 @@ class CartState extends ChangeNotifier {
 
   Map<String, CartLine> get activeStore => cartTab == 'rx' ? rxCart : cart;
 
+  /// Whether an Rx cart line is CURRENTLY in stock — re-checked live against
+  /// whatever [CatalogRepository] has cached for that prescription, rather
+  /// than trusting [CartLine.inStock] (captured once, at add time). Pricing
+  /// and stock for a prescription item are set by a pharmacist, often well
+  /// after the item was first added to the Rx cart, so it's genuinely
+  /// possible for a line to go stale in a way the regular shop cart mostly
+  /// isn't exposed to. Falls back to the line's own captured [CartLine.inStock]
+  /// if this prescription (or this specific item index) isn't cached right
+  /// now — e.g. the person added it, then the app was restarted before ever
+  /// reopening that prescription again this session.
+  bool isRxLineInStock(CartLine line) {
+    if (line.rxId == null) return line.inStock;
+    final idx = int.tryParse(line.key.split('#').last);
+    if (idx == null) return line.inStock;
+    final rx = CatalogRepository.instance.findPrescription(line.rxId!);
+    if (rx == null || idx < 0 || idx >= rx.items.length) return line.inStock;
+    final sellers = rx.items[idx].sellers;
+    if (sellers.isEmpty) return line.inStock;
+    return sellers.any((s) => s.stock);
+  }
+
   // ---------------------------------------------------------------- cart ops
-  void addToCart(Product p, {required String seller, required double price, double? was, int? apiProductId}) {
-    final key = '${p.id}_$seller';
+  void addToCart(Product p, {required String seller, required double price, double? was, int? apiProductId, bool inStock = true}) {
+    final key = lineKey(apiProductId: apiProductId, productId: p.id, seller: seller);
     if (cart.containsKey(key)) {
       cart[key]!.qty++;
+      cart[key]!.recomputeBogoLocally();
     } else {
-      cart[key] = CartLine(key: key, productId: p.id, apiProductId: apiProductId, seller: seller, price: price, was: was);
+      cart[key] = CartLine(
+        key: key,
+        productId: p.id,
+        apiProductId: apiProductId,
+        seller: seller,
+        price: price,
+        was: was,
+        imageOverride: p.imageUrl,
+        bogoStatus: p.bogoStatus,
+        bogoLabel: p.bogoLabel,
+        inStock: inStock,
+      )..recomputeBogoLocally();
     }
     _locallyToggledCartKeys.add(key);
     notifyListeners();
   }
 
-  /// True once a specific cart line's real state is known for certain this
-  /// session — a full sync ([loadCartRemote]) has happened, or the person
-  /// added/changed/removed this exact line locally themselves. Everything
-  /// else has to fall back to a one-time seed from that product's own
-  /// `cart_status` (see [seedCartStatusOnce]) — which only knows "yes/no",
-  /// not a real quantity, unlike a full sync.
-  bool _cartFullySynced = false;
   final Set<String> _locallyToggledCartKeys = {};
-  final Set<String> _cartStatusSeeded = {};
 
-  /// Seeds a placeholder line (qty 1) the first time a product whose own
-  /// `cart_status` says "already in cart" is seen, and nothing local knows
-  /// about it yet — so the stepper (not an "Add" button) shows immediately
-  /// from list-response data, instead of only after a full cart sync. Only
-  /// ever runs once per key per session: a real [loadCartRemote] sync (or
-  /// the person changing the quantity themselves) is what corrects the
-  /// placeholder qty to the real one, not repeated reseeding — otherwise a
-  /// stale `cart_status: true` on a re-rendered product could stomp back
-  /// over a quantity the person already changed or removed.
-  void seedCartStatusOnce(Product p, {required String seller, required double price, double? was, int? apiProductId, required bool cartStatus}) {
-    final key = '${p.id}_$seller';
-    if (_cartFullySynced || _cartStatusSeeded.contains(key) || _locallyToggledCartKeys.contains(key)) return;
-    _cartStatusSeeded.add(key);
-    if (cartStatus && !cart.containsKey(key)) {
-      cart[key] = CartLine(key: key, productId: p.id, apiProductId: apiProductId, seller: seller, price: price, was: was, qty: 1);
-      notifyListeners();
+  /// Cart line keys with a network call currently in flight (add/update/
+  /// remove). The stepper shows a small loader for a key while it's in
+  /// here — see [isSyncingCart] — AND a second tap on that same key is
+  /// ignored rather than firing an overlapping request (see
+  /// [addToCartRemote]/[setQtyRemote]). Every tap still goes straight to
+  /// the network with no artificial delay; this only ever blocks a second
+  /// tap that lands *while the first one's call is still in flight*.
+  final Set<String> pendingSyncKeys = {};
+
+  bool isSyncingCart(String key) => pendingSyncKeys.contains(key);
+
+  /// Tracks, per cart-line key, the identity of the last [Product] instance
+  /// whose `cart_qty` was already applied via [syncQtyFromListing] — see
+  /// that method's doc for why this exists.
+  final Map<String, int> _listingSyncedProductIdentity = {};
+
+  /// Upserts a line's quantity straight from a fresh product-listing
+  /// response's own `cart_qty` (Shop/Home/Store) — a REAL number the
+  /// backend now sends per row, not a guess. Unlike the old seed-once
+  /// mechanism this replaces, a genuinely fresh fetch (a revisit, a new
+  /// page) always gets applied — it doesn't freeze after the first check.
+  ///
+  /// BUT it only applies once per *actual fetch*, not once per widget
+  /// rebuild: a product card rebuilds constantly for reasons that have
+  /// nothing to do with new data arriving (the person tapping the stepper
+  /// itself, another card's wishlist toggling, etc.), and the widget calls
+  /// this from a `build()`-time postFrameCallback every single time. Each
+  /// `ShopViewModel.load()` creates brand-new [Product] objects, so
+  /// "already applied for this exact object" (tracked via
+  /// [_listingSyncedProductIdentity]) is what distinguishes "a real new
+  /// fetch landed" from "the same fetch's card just rebuilt again" —
+  /// without it, this stomped the real post-tap quantity back to the
+  /// stale listing value the instant a tap's own sync finished (loader
+  /// shows, then the number reverts to the old one).
+  ///
+  /// Also skips a key that's currently mid-sync ([pendingSyncKeys]) so a
+  /// listing fetch that started before the person's own tap can't land
+  /// after it and stomp the tap while it's still in flight — AND skips a
+  /// key already in `_locallyToggledCartKeys` (the person changed it
+  /// locally this session), for the same reason [loadCartRemote]'s merge
+  /// does: their own tap's own request already told the server the truth,
+  /// so their local quantity is trusted over a listing response that could
+  /// just as easily be a stale read from before that tap landed. Only ever
+  /// touches the ONE key given — never clears the rest of [cart] — because
+  /// a listing response is a partial/paginated view, not the full cart
+  /// (that's what [loadCartRemote] is for, which is also still needed here
+  /// to learn each line's real `serverCartId` so +/- taps can actually
+  /// reach the server).
+  void syncQtyFromListing(Product p, {required String seller, required double price, double? was, int? apiProductId, required int qty, bool inStock = true}) {
+    final key = lineKey(apiProductId: apiProductId, productId: p.id, seller: seller);
+    if (pendingSyncKeys.contains(key)) return; // don't record identity yet — retry once the in-flight tap's sync clears
+    if (_locallyToggledCartKeys.contains(key)) return; // the person's own tap already told the server the truth for this line
+
+    final identity = identityHashCode(p);
+    if (_listingSyncedProductIdentity[key] == identity) return; // same fetch, already applied
+    _listingSyncedProductIdentity[key] = identity;
+
+    final existing = cart[key];
+    if (qty <= 0) {
+      if (existing != null) {
+        cart.remove(key);
+        notifyListeners();
+      }
+      return;
     }
+    if (existing != null && existing.qty == qty) return; // already correct — no-op
+
+    cart[key] = CartLine(
+      key: key,
+      productId: p.id,
+      apiProductId: apiProductId,
+      seller: seller,
+      price: price,
+      was: was,
+      qty: qty,
+      serverCartId: existing?.serverCartId, // preserve if a fuller sync already learned it
+      imageOverride: p.imageUrl,
+      bogoStatus: p.bogoStatus,
+      bogoLabel: p.bogoLabel,
+      inStock: inStock,
+    )..recomputeBogoLocally();
+    notifyListeners();
+  }
+
+  /// The ONE canonical way to build a cart-line key — every call site that
+  /// needs one (here, [loadCartRemote], and both product-card widgets)
+  /// MUST go through this rather than building the string inline.
+  ///
+  /// `apiProductId` (the seller-specific listing id) is used when known,
+  /// because it's confirmed to be the SAME id space `/app/products`,
+  /// `/app/cart`, and order placement all use (see [addToCartRemote]'s
+  /// docs) — unlike `productId` (the catalog id), which `/app/cart`'s own
+  /// `product_id` field does NOT refer to, despite the name. Falls back to
+  /// `productId_seller` only when no apiProductId is available yet.
+  ///
+  /// Before this existed, a line added locally from the Shop grid got the
+  /// key `productId_seller`, while [loadCartRemote] mostly built
+  /// `cart_<cartId>` for the exact same real line — two different keys for
+  /// one cart line. That's why the shop grid's stepper could show "Add to
+  /// cart" for something that genuinely was in the cart (a synced line
+  /// living under a key the grid never looked up), and why a local add
+  /// could end up duplicating a synced line instead of updating it.
+  static String lineKey({int? apiProductId, int? productId, required String seller}) {
+    if (apiProductId != null) return 'ap_$apiProductId';
+    return '${productId}_$seller';
   }
 
   void setQty(String key, int delta, {bool rx = false}) {
@@ -87,7 +200,11 @@ class CartState extends ChangeNotifier {
     final line = store[key];
     if (line == null) return;
     line.qty += delta;
-    if (line.qty <= 0) store.remove(key);
+    if (line.qty <= 0) {
+      store.remove(key);
+    } else {
+      line.recomputeBogoLocally();
+    }
     if (!rx) _locallyToggledCartKeys.add(key);
     notifyListeners();
   }
@@ -139,6 +256,7 @@ class CartState extends ChangeNotifier {
   /// below is now dead in practice (kept only in case some future response
   /// is ever missing it) rather than the primary path it used to be.
   Future<void> loadCartRemote(int userId) async {
+    if (cartLoading) return;
     cartLoading = true;
     notifyListeners();
     try {
@@ -163,14 +281,32 @@ class CartState extends ChangeNotifier {
         final fallbackPrice = double.tryParse((e['price'] ?? 0).toString()) ?? 0;
         final fallbackWas = double.tryParse((e['compare_price'] ?? '').toString());
         final pharmacyNameFromCart = e['pharmacy_name']?.toString();
+        final imageFromCart = e['image']?.toString();
+        // Confirmed live (`in_stock`) across product/cart/order/rx responses
+        // (2026-07-29). Defaults true — a response that omits this for an
+        // in-stock item shouldn't wrongly label it out of stock.
+        final inStockFromCart = e['in_stock'] == null ? true : e['in_stock'] == true;
+        // Confirmed live on /app/cart per line (2026-07-29) — the real
+        // BOGO math for this exact line, not a client-side guess.
+        final bogoStatus = e['bogo_status'] == true;
+        final bogoLabel = e['bogo_label']?.toString();
+        final freeQty = int.tryParse((e['free_qty'] ?? '').toString());
+        final paidQty = int.tryParse((e['paid_qty'] ?? '').toString());
+        final bogoSaved = double.tryParse((e['bogo_saved'] ?? '').toString());
 
         // Confirmed always present now — builds the line from the cart
         // response alone, no PDP fetch needed.
         if (pharmacyNameFromCart != null && pharmacyNameFromCart.isNotEmpty) {
-          final key = 'cart_${cartId ?? productIdRaw}';
+          // `productIdRaw` here IS the seller-specific listing id (same
+          // space as `apiProductId`/`s.productId` — see [lineKey]'s doc),
+          // so this key lines up with whatever the shop grid already has
+          // for this exact product+seller, instead of living under its own
+          // `cart_<cartId>` key that nothing else would ever look up.
+          final apiProductId = int.tryParse(productIdRaw.toString());
+          final key = lineKey(apiProductId: apiProductId, seller: pharmacyNameFromCart);
           newCart[key] = CartLine(
             key: key,
-            apiProductId: int.tryParse(productIdRaw.toString()),
+            apiProductId: apiProductId,
             seller: pharmacyNameFromCart,
             price: fallbackPrice,
             was: fallbackWas,
@@ -178,6 +314,13 @@ class CartState extends ChangeNotifier {
             serverCartId: cartId,
             nameOverride: e['name']?.toString(),
             nameOverrideAr: e['name']?.toString(),
+            imageOverride: imageFromCart,
+            inStock: inStockFromCart,
+            bogoStatus: bogoStatus,
+            bogoLabel: bogoLabel,
+            freeQty: freeQty,
+            paidQty: paidQty,
+            bogoSaved: bogoSaved,
           );
           return;
         }
@@ -196,7 +339,7 @@ class CartState extends ChangeNotifier {
             (s) => s.productId?.toString() == productIdRaw.toString(),
             orElse: () => product.sellers.first,
           );
-          final key = '${product.id}_${seller.name}';
+          final key = lineKey(apiProductId: seller.productId, productId: product.id, seller: seller.name);
           newCart[key] = CartLine(
             key: key,
             productId: product.id,
@@ -206,29 +349,88 @@ class CartState extends ChangeNotifier {
             was: seller.was,
             qty: qty,
             serverCartId: cartId,
+            imageOverride: product.imageUrl,
+            inStock: seller.stock,
+            bogoStatus: bogoStatus,
+            bogoLabel: bogoLabel,
+            freeQty: freeQty,
+            paidQty: paidQty,
+            bogoSaved: bogoSaved,
           );
         } catch (_) {
           // Couldn't resolve which pharmacy this is from — still show it
           // rather than dropping it, using the cart response's own fields
           // directly. Grouped under a placeholder seller name since we
           // genuinely don't know the real one here.
-          final key = 'cart_${cartId ?? productIdRaw}';
+          final apiProductId = int.tryParse(productIdRaw.toString());
+          final key = lineKey(apiProductId: apiProductId, seller: 'WASFA');
           newCart[key] = CartLine(
             key: key,
-            apiProductId: int.tryParse(productIdRaw.toString()),
+            apiProductId: apiProductId,
             seller: 'WASFA',
             price: fallbackPrice,
             qty: qty,
             serverCartId: cartId,
             nameOverride: e['name']?.toString(),
             nameOverrideAr: e['name']?.toString(),
+            imageOverride: imageFromCart,
+            inStock: inStockFromCart,
+            bogoStatus: bogoStatus,
+            bogoLabel: bogoLabel,
+            freeQty: freeQty,
+            paidQty: paidQty,
+            bogoSaved: bogoSaved,
           );
         }
       }));
-      cart
-        ..clear()
-        ..addAll(newCart);
-      _cartFullySynced = true;
+      // Merge, don't blindly replace: this fetch can be in flight for a
+      // while, and an individual +/- tap's own immediate `/app/cart/update`
+      // call can easily land BEFORE this one does even though this one
+      // started first (this call does per-line work and sometimes a PDP
+      // fallback fetch; a single tap's update does not). If this response
+      // is stale relative to that tap, `cart..clear()..addAll(newCart)`
+      // used to stomp the just-confirmed quantity straight back to the old
+      // one — the fix succeeds server-side (see the `/cart/update` log),
+      // the tap's own optimistic UI is briefly correct, and then THIS
+      // response arrives and reverts it, which is exactly the bug this
+      // fixes.
+      //
+      // A key already in `_locallyToggledCartKeys` (the person has changed
+      // it locally this session) keeps its own quantity — its own request
+      // already told the server the truth — and only picks up this
+      // response's `serverCartId` if it didn't already have one (needed
+      // for that key's future +/- taps to reach the server at all).
+      // Anything not locally touched this session is fully trusted from
+      // this response, same as before.
+      for (final entry in newCart.entries) {
+        final key = entry.key;
+        final serverLine = entry.value;
+        final localLine = cart[key];
+        if (localLine != null && _locallyToggledCartKeys.contains(key)) {
+          localLine.serverCartId ??= serverLine.serverCartId;
+          // BOGO math isn't exposed to the same staleness race qty is (see
+          // this method's own doc above) — /app/cart/update's own response
+          // doesn't return it at all, so recomputeBogoLocally's "1 free
+          // per 2 units" guess is the best available until a full reload
+          // like this one lands with the server's real numbers. Only
+          // trusted when this response's own qty for the line still
+          // matches what's showing locally — if it doesn't, this response
+          // reflects a different quantity than the one currently on
+          // screen (a newer tap arrived since this fetch started), so its
+          // bogo numbers wouldn't correspond to the current qty either.
+          if (serverLine.qty == localLine.qty) {
+            localLine.freeQty = serverLine.freeQty;
+            localLine.paidQty = serverLine.paidQty;
+            localLine.bogoSaved = serverLine.bogoSaved;
+          }
+        } else {
+          cart[key] = serverLine;
+        }
+      }
+      // Drop anything the server no longer has — unless it's a line the
+      // person touched locally this session, which stays (its own sync may
+      // still be in flight, or about to be sent).
+      cart.removeWhere((key, _) => !newCart.containsKey(key) && !_locallyToggledCartKeys.contains(key));
     } catch (_) {
       // Non-fatal — keep whatever was already there locally.
     } finally {
@@ -240,59 +442,75 @@ class CartState extends ChangeNotifier {
   /// Replaces the local Rx cart with the server's copy — call when opening
   /// the Cart screen, same as [loadCartRemote] does for the regular cart.
   ///
-  /// Confirmed live response:
-  /// `{ groups: [{ prescription_id, subtotal, items: [{ cart_id,
-  /// product_id, name, image, price, quantity, dosage, duration,
-  /// dose_time }] }], total, count }`.
+  /// Confirmed live (2026-07-31): `{"groups":[{"prescription_id",
+  /// "subtotal","out_of_stock_count","items":[{cart_id,product_id,name,
+  /// image,price,quantity,pharmacy_name,stock,in_stock,is_restricted,
+  /// dosage,duration,dose_time}]}],"total","out_of_stock_count","count"}`.
   ///
-  /// Two things worth calling out since they differ from the prescription
-  /// *detail* endpoint's item shape (which this still reuses
-  /// [Prescription.fromJson]/[RxItem.fromJson] for, since the group's own
-  /// `prescription_id` + `items` line up with what that parser already
-  /// expects):
-  /// - Each group has no doctor/clinic/diagnosis/date/status fields at
-  ///   all — those come back empty here, which is fine, this only needs
-  ///   `.id` and `.items` from it.
-  /// - Each item has no `seller` field and no `id` field — only `cart_id`.
-  ///   No seller name means there's no real pharmacy to group these lines
-  ///   by for display, so each group is shown under its *prescription* id
-  ///   instead of a pharmacy name (which also happens to match reality
-  ///   better here, since Rx checkout is per-prescription, not
-  ///   per-pharmacy). No item `id` means the cart-line key uses `cart_id`
-  ///   instead of the `rxId#itemId` pattern used when first adding a line.
+  /// Each group is its own prescription, and — confirmed against the
+  /// reference web app — checkout happens PER GROUP, not combined into one
+  /// cart-wide checkout: each prescription gets its own "Checkout" button.
+  /// See checkout_screen.dart's `rxScope` param, and [rxGroupsFor] (groups
+  /// by `line.rxId` directly, unlike the regular cart's [groupsFor] which
+  /// groups by pharmacy — a prescription's own "pharmacy" grouping doesn't
+  /// apply the same way here).
+  ///
+  /// `pharmacy_name` was added to this endpoint's items on 2026-07-31 —
+  /// used directly now. The cross-reference-against-cached-prescription
+  /// fallback (matching `product_id` against whatever prescription detail
+  /// is already cached in [CatalogRepository]) only kicks in if a response
+  /// genuinely omits it.
+  ///
+  /// Also has no item `id` field at all, only `cart_id` — the cart-line
+  /// key here uses `cart_id` instead of the `rxId#itemId` pattern used
+  /// when first adding a line via the prescription detail screen.
   Future<void> loadRxCartRemote(int userId) async {
+    if (rxCartLoading) return;
     rxCartLoading = true;
     notifyListeners();
     try {
       final res = await AccountService.instance.rxCartList(userId);
-      final list = (res is Map ? res['groups'] ?? res['prescriptions'] ?? res['items'] ?? res['data'] : null) ?? (res is List ? res : const []);
-      final groups = (list as List).whereType<Map>().map((e) => Prescription.fromJson(e.cast<String, dynamic>())).toList();
-
+      final groupsJson = (res is Map && res['groups'] is List) ? (res['groups'] as List) : const [];
       final newRxCart = <String, CartLine>{};
-      for (final rx in groups) {
-        // Keeps the Rx detail screen's cache warm too, so opening a
-        // prescription that's already in the cart doesn't show stale data
-        // — best-effort only, since this group carries none of the
-        // doctor/clinic/etc fields the detail screen actually needs, so
-        // don't overwrite a richer cached copy with this thinner one.
-        if (CatalogRepository.instance.findPrescription(rx.id) == null) {
-          CatalogRepository.instance.upsertPrescription(rx);
-        }
-        for (final item in rx.items) {
-          if (item.sellers.isEmpty || item.cartId == null) continue;
-          final seller = item.sellers.first; // price/product_id only — no real seller name here
-          final key = 'cart_${item.cartId}';
+      for (final g in groupsJson.whereType<Map>()) {
+        final group = g.cast<String, dynamic>();
+        final rxId = group['prescription_id']?.toString();
+        if (rxId == null || rxId.isEmpty) continue;
+        final cachedRx = CatalogRepository.instance.findPrescription(rxId);
+        final itemsJson = group['items'] is List ? (group['items'] as List) : const [];
+        for (final it in itemsJson.whereType<Map>()) {
+          final item = it.cast<String, dynamic>();
+          final cartId = int.tryParse((item['cart_id'] ?? '').toString());
+          if (cartId == null) continue;
+          final apiProductId = int.tryParse((item['product_id'] ?? '').toString());
+          // Confirmed live as of 2026-07-31 — the backend added
+          // pharmacy_name directly to this endpoint's items, so the
+          // cross-reference-against-cached-prescription fallback below is
+          // now only needed for a response that genuinely omits it (or an
+          // older cached response shape).
+          String sellerName = item['pharmacy_name']?.toString() ?? '';
+          if (sellerName.isEmpty && cachedRx != null) {
+            for (final cachedItem in cachedRx.items) {
+              if (cachedItem.sellers.isNotEmpty && cachedItem.sellers.first.productId == apiProductId) {
+                sellerName = cachedItem.sellers.first.name;
+                break;
+              }
+            }
+          }
+          if (sellerName.isEmpty) sellerName = 'WASFA';
+          final key = 'cart_$cartId';
           newRxCart[key] = CartLine(
             key: key,
-            apiProductId: seller.productId,
-            seller: rx.id, // groups this line by prescription, not a (nonexistent) pharmacy name
-            price: seller.price,
-            qty: item.cartQuantity ?? 1,
-            rxId: rx.id,
-            nameOverride: item.name,
-            nameOverrideAr: item.nameAr,
-            emojiOverride: item.emoji,
-            serverCartId: item.cartId,
+            apiProductId: apiProductId,
+            seller: sellerName,
+            price: double.tryParse((item['price'] ?? 0).toString()) ?? 0,
+            qty: int.tryParse((item['quantity'] ?? 1).toString()) ?? 1,
+            rxId: rxId,
+            nameOverride: item['name']?.toString(),
+            nameOverrideAr: item['name']?.toString(),
+            imageOverride: item['image']?.toString(),
+            serverCartId: cartId,
+            inStock: item['in_stock'] == null ? true : item['in_stock'] == true,
           );
         }
       }
@@ -307,22 +525,43 @@ class CartState extends ChangeNotifier {
     }
   }
 
+  /// Groups the Rx cart by prescription (`line.rxId`) — NOT by pharmacy
+  /// like [groupsFor]. Confirmed against the reference web app (2026-07-31):
+  /// Rx cart items are organized per-prescription with their own subtotal
+  /// and their own "Checkout" button, not grouped by pharmacy at all.
+  Map<String, List<CartLine>> rxGroupsFor() {
+    final g = <String, List<CartLine>>{};
+    for (final line in rxCart.values) {
+      g.putIfAbsent(line.rxId ?? '', () => []).add(line);
+    }
+    return g;
+  }
+
   /// Adds to the cart optimistically (instant, always works), then syncs to
-  /// the server in the background — skips the sync entirely if signed out,
-  /// same allowance as the rest of the app (browsing/cart use doesn't
-  /// require an account; only checkout does). Uses `update` instead of
-  /// `add` when the line already existed, since `/app/cart/add` reads like
-  /// an incremental "add N more" rather than "set quantity to N" — sending
-  /// the *new total* to `add` again for an existing line risked double-
-  /// counting server-side.
-  Future<void> addToCartRemote(BuildContext context, Product p, {required String seller, required double price, double? was, int? apiProductId}) async {
+  /// the server right away — no delay, no batching. Skips the sync
+  /// entirely if signed out, same allowance as the rest of the app
+  /// (browsing/cart use doesn't require an account; only checkout does).
+  /// Uses `update` instead of `add` when the line already existed, since
+  /// `/app/cart/add` reads like an incremental "add N more" rather than
+  /// "set quantity to N" — sending the *new total* to `add` again for an
+  /// existing line risked double-counting server-side.
+  ///
+  /// If a sync for this exact key is already in flight, this call is
+  /// ignored rather than firing a second overlapping request — see
+  /// [isSyncingCart]. No artificial wait either way: the very first tap
+  /// always goes straight to the network.
+  Future<void> addToCartRemote(BuildContext context, Product p, {required String seller, required double price, double? was, int? apiProductId, bool inStock = true}) async {
     final auth = context.read<AuthState>();
-    final key = '${p.id}_$seller';
+    final key = lineKey(apiProductId: apiProductId, productId: p.id, seller: seller);
+    if (pendingSyncKeys.contains(key)) return; // previous tap's call still in flight
     final existedAlready = cart.containsKey(key);
-    addToCart(p, seller: seller, price: price, was: was, apiProductId: apiProductId);
+    addToCart(p, seller: seller, price: price, was: was, apiProductId: apiProductId, inStock: inStock); // instant, local — unchanged
     if (!auth.isSignedIn) return;
     final line = cart[key];
     if (line == null) return;
+
+    pendingSyncKeys.add(key);
+    notifyListeners();
     try {
       if (existedAlready) {
         // Needs this line's own cart_id (confirmed: /app/cart/update takes
@@ -332,6 +571,9 @@ class CartState extends ChangeNotifier {
         // a local-only bump until the next sync picks up the real id.
         if (line.serverCartId != null) {
           await CartService.instance.update(auth.userId!, line.serverCartId!, line.qty);
+          // Same reasoning as setQtyRemote's own update call — see its
+          // comment on why this isn't awaited and what it corrects.
+          loadCartRemote(auth.userId!);
         }
       } else {
         // Confirmed: a real `/app/products` response has `product_id`
@@ -347,6 +589,9 @@ class CartState extends ChangeNotifier {
       }
     } catch (e) {
       if (context.mounted) showErrorToast(context, 'Added, but couldn\'t sync to your account: ${describeError(e)}');
+    } finally {
+      pendingSyncKeys.remove(key);
+      notifyListeners();
     }
   }
 
@@ -355,14 +600,23 @@ class CartState extends ChangeNotifier {
   /// from the same sequence as regular cart entries) — so this uses the
   /// exact same `/app/cart/update`/`/app/cart/remove` endpoints for both,
   /// just operating on [rxCart] instead of [cart] when [rx] is true.
+  ///
+  /// Same no-delay behaviour as [addToCartRemote]: calls the API
+  /// immediately, and ignores a tap if this key's previous call hasn't
+  /// finished yet rather than overlapping it.
   Future<void> setQtyRemote(BuildContext context, String key, int delta, {bool rx = false}) async {
+    if (pendingSyncKeys.contains(key)) return; // previous tap's call still in flight
     final auth = context.read<AuthState>();
     final store = rx ? rxCart : cart;
     final line = store[key];
     if (line == null) return;
     final cartId = line.serverCartId;
-    setQty(key, delta, rx: rx);
+
+    setQty(key, delta, rx: rx); // instant, local — unchanged
     if (!auth.isSignedIn) return;
+
+    pendingSyncKeys.add(key);
+    notifyListeners();
     final stillPresent = store.containsKey(key);
     try {
       if (!stillPresent) {
@@ -373,11 +627,24 @@ class CartState extends ChangeNotifier {
         }
       } else if (cartId != null) {
         await CartService.instance.update(auth.userId!, cartId, store[key]!.qty);
+        // /app/cart/update's own response doesn't return updated
+        // free_qty/paid_qty/bogo_saved for this line (just {"ok","action"})
+        // — recomputeBogoLocally's "1 free per 2 units" guess is what's
+        // showing right now. Not awaited: this runs in the background and
+        // corrects it via loadCartRemote's merge (see that method's doc on
+        // why a locally-toggled line's bogo fields specifically get
+        // updated from this, unlike its qty) shortly after, without
+        // delaying this tap's own already-instant feedback.
+        if (!rx) loadCartRemote(auth.userId!);
       }
     } catch (e) {
       if (context.mounted) showErrorToast(context, 'Couldn\'t sync that quantity change: ${describeError(e)}');
+    } finally {
+      pendingSyncKeys.remove(key);
+      notifyListeners();
     }
   }
+
 
   Future<void> removeLineRemote(BuildContext context, String key, {bool rx = false}) async {
     final auth = context.read<AuthState>();
@@ -509,8 +776,17 @@ class CartState extends ChangeNotifier {
   int get rxCartCount => rxCart.length;
 
   // ------------------------------------------------------------ pure totals
-  /// Free-of-charge units for BOGO ("1+1") lines.
+  /// Free-of-charge units for BOGO ("1+1") lines. Prefers the real
+  /// `free_qty` confirmed live on `/app/cart` (2026-07-29) — the old guess
+  /// below (half the quantity, only if [CatalogRepository] happens to have
+  /// this line's product cached by catalog id) is now just a fallback for
+  /// a line that hasn't been through a real `/app/cart` sync yet. That old
+  /// guess was also fragile in its own right: a line built by
+  /// [loadCartRemote]'s confirmed-live branch never carries a catalog
+  /// `productId` at all (only `apiProductId`), so the lookup it depends on
+  /// silently found nothing for exactly the lines that matter most.
   int _freeUnits(CartLine line) {
+    if (line.freeQty != null) return line.freeQty!;
     if (line.productId == null) return 0;
     final p = CatalogRepository.instance.findProduct(line.productId!);
     if (p == null || !p.isBogo) return 0;
@@ -576,8 +852,13 @@ class CartState extends ChangeNotifier {
 
   /// Full checkout totals — mirrors JS `computeTotals()`, minus the old
   /// auto-applied-fake-promo behaviour (see [appliedCoupon]'s doc).
-  CheckoutTotals computeTotals() {
-    final store = cartTab == 'rx' ? rxCart : cart;
+  /// [storeOverride] lets a caller compute totals for a SUBSET of the
+  /// active store — used by Rx checkout scoped to one specific
+  /// prescription (see checkout_screen.dart's `rxScope`), since each
+  /// prescription checks out separately rather than the whole Rx cart at
+  /// once (confirmed against the reference web app, 2026-07-31).
+  CheckoutTotals computeTotals({Map<String, CartLine>? storeOverride}) {
+    final store = storeOverride ?? (cartTab == 'rx' ? rxCart : cart);
     final groups = groupsFor(store);
     final before = store.values.fold(0.0, (s, l) => s + l.lineTotalBeforeDiscount);
     final sub = cartSubtotal(store);

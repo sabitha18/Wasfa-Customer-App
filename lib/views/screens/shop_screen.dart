@@ -23,6 +23,15 @@ class ShopScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final userId = context.read<AuthState>().userId;
+    if (userId != null) {
+      // The real, authoritative cart — not a `cart_status` boolean guess.
+      // Fired once per Shop-screen open (this build() runs once per
+      // navigation push, not on every rebuild); loadCartRemote's own
+      // re-entrancy guard makes a second call here harmless too.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (context.mounted) context.read<CartState>().loadCartRemote(userId);
+      });
+    }
     return ChangeNotifierProvider(
       create: (_) => ShopViewModel(initial: initialFilter, userId: userId),
       child: const _ShopBody(),
@@ -63,7 +72,12 @@ class _ShopBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final vm = context.watch<ShopViewModel>();
-    final cart = context.watch<CartState>();
+    // context.read, not watch — cart/list cards each select just the piece
+    // they need (see ProductCard/_ProductListCard). Watching the whole
+    // CartState here would rebuild this entire grid/list on every cart
+    // change anywhere, not just the count badge below.
+    final cart = context.read<CartState>();
+    final cartCount = context.select<CartState, int>((c) => c.cartCount);
     final locale = context.watch<LocaleState>();
     final results = vm.results;
     final inPharmacy = vm.pharmacy != null;
@@ -246,7 +260,7 @@ class _ShopBody extends StatelessWidget {
             // ── .appbar — one white block containing both .ab-top AND .search ──
             // Stays fixed above the scroll area, same as the HTML prototype
             // where #screen (the scrollable div) sits below the fixed .appbar.
-            if (!inPharmacy) _TopAppBar(cartCount: cart.cartCount, onQueryChanged: vm.setQuery),
+            if (!inPharmacy) _TopAppBar(cartCount: cartCount, onQueryChanged: vm.setQuery),
 
             Expanded(
               child: Stack(
@@ -752,20 +766,47 @@ class _ProductListCard extends StatelessWidget {
     final p = product;
     final was = p.bestWasPrice;
     final s = p.defaultSeller;
-    final key = '${p.id}_${s.name}';
+    // Canonical key — MUST match CartState.lineKey exactly (see its doc),
+    // or a real synced cart line and this lookup silently diverge.
+    final key = CartState.lineKey(apiProductId: s.productId, productId: p.id, seller: s.name);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      cart.seedCartStatusOnce(p, seller: s.name, price: s.price, was: s.was, apiProductId: s.productId, cartStatus: p.cartStatus);
+      cart.syncQtyFromListing(
+        p,
+        seller: s.name,
+        price: s.price,
+        was: s.was,
+        apiProductId: s.productId,
+        qty: p.cartQty ?? (p.cartStatus ? 1 : 0),
+        inStock: s.stock,
+      );
     });
-    final qty = cart.cart[key]?.qty ?? 0;
+    final qty = context.select<CartState, int>((c) => c.cart[key]?.qty ?? 0);
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: AppColors.shSm),
         child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(11),
-            child: ProductImage(product: p, height: 74, width: 74, emojiSize: 32),
+          Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(11),
+                child: ProductImage(product: p, height: 74, width: 74, emojiSize: 32),
+              ),
+              if (p.isBogo)
+                Positioned(
+                  left: 3,
+                  top: 3,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(color: AppColors.rose, borderRadius: BorderRadius.circular(20)),
+                    child: Text(
+                      p.bogoDisplayLabel,
+                      style: const TextStyle(fontSize: 7.5, fontWeight: FontWeight.w700, color: Colors.white),
+                    ),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -810,7 +851,7 @@ class _ProductListCard extends StatelessWidget {
                 SizedBox(width: 22, child: Text('$qty', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13))),
                 StepBtn(
                   icon: Icons.add_rounded,
-                  onTap: !s.stock ? null : () => cart.addToCartRemote(context, p, seller: s.name, price: s.price, was: s.was, apiProductId: s.productId),
+                  onTap: !s.stock ? null : () => cart.addToCartRemote(context, p, seller: s.name, price: s.price, was: s.was, apiProductId: s.productId, inStock: s.stock),
                 ),
               ]),
             )
@@ -824,7 +865,7 @@ class _ProductListCard extends StatelessWidget {
           else
             GestureDetector(
               onTap: () {
-                cart.addToCartRemote(context, p, seller: s.name, price: s.price, was: s.was, apiProductId: s.productId);
+                cart.addToCartRemote(context, p, seller: s.name, price: s.price, was: s.was, apiProductId: s.productId, inStock: s.stock);
                 showToast(context, 'Added to cart');
               },
               child: Container(

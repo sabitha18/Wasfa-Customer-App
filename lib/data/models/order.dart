@@ -43,6 +43,14 @@ class OrderItemLine {
   /// same way as a best-effort guess pending a confirmed order-item
   /// example that actually has a restricted item in it.
   final bool restricted;
+  /// Confirmed live (`in_stock`) across product/cart/order/rx responses
+  /// (2026-07-29). Mainly matters for the Reorder action (orders_screen.dart)
+  /// — a delivered order's own items were already fulfilled regardless of
+  /// whether they're in stock NOW, so this doesn't change how the order
+  /// itself displays, only whether reordering a given line is offered.
+  /// Defaults true so an order predating this field (or a response that
+  /// simply omits it for an in-stock item) doesn't wrongly block reordering.
+  final bool inStock;
   const OrderItemLine({
     this.productId,
     this.detailId,
@@ -58,6 +66,7 @@ class OrderItemLine {
     this.returnStatus,
     this.returnQty = 0,
     this.restricted = false,
+    this.inStock = true,
   });
 
   factory OrderItemLine.fromJson(Map<String, dynamic> json) => OrderItemLine(
@@ -77,6 +86,7 @@ class OrderItemLine {
         returnStatus: asStringOrNull(json, const ['return_status']),
         returnQty: asInt(json, const ['return_qty'], fallback: 0),
         restricted: asBool(json, const ['restricted', 'is_restricted', 'pickup_only']),
+        inStock: asBool(json, const ['in_stock', 'stock'], fallback: true),
       );
 }
 
@@ -137,6 +147,83 @@ class OrderRequest {
       : ts = ts ?? DateTime.now();
 }
 
+/// The delivery address embedded directly on `GET /acct/order/{code}`'s own
+/// response — confirmed live (2026-07-31), never parsed before. This is a
+/// SNAPSHOT of where the order was actually sent (worth keeping distinct
+/// from [AddressState]'s current saved addresses, which can be edited or
+/// deleted after the fact — this is what the order itself recorded).
+class OrderAddress {
+  final String name;
+  final String phone;
+  final String? email;
+  final double? lat;
+  final double? lng;
+  final int? governorateId;
+  final int? areaId;
+  /// Confirmed live as the literal camelCase key `areaName` — NOT
+  /// `area_name`/`area`/`gov`, the forms seen on other address-bearing
+  /// endpoints (see Address.fromJson's own doc on that inconsistency).
+  /// Every address-shaped response so far has used a different key for
+  /// this same concept.
+  final String areaName;
+  final String block;
+  final String street;
+  final String building;
+  final String floor;
+  final String flat;
+
+  const OrderAddress({
+    required this.name,
+    required this.phone,
+    this.email,
+    this.lat,
+    this.lng,
+    this.governorateId,
+    this.areaId,
+    this.areaName = '',
+    this.block = '',
+    this.street = '',
+    this.building = '',
+    this.floor = '',
+    this.flat = '',
+  });
+
+  /// e.g. "Abu Halifa, Block sfsgf, Street tttþ, Building cbgfhfgh, Floor
+  /// fgddf, Flat gf" — skips any part that's blank, same join pattern as
+  /// Address.formatted elsewhere.
+  String get formatted {
+    final parts = <String>[
+      if (areaName.trim().isNotEmpty) areaName.trim(),
+      if (block.trim().isNotEmpty) 'Block ${block.trim()}',
+      if (street.trim().isNotEmpty) 'Street ${street.trim()}',
+      if (building.trim().isNotEmpty) 'Building ${building.trim()}',
+      if (floor.trim().isNotEmpty) 'Floor ${floor.trim()}',
+      if (flat.trim().isNotEmpty) 'Flat ${flat.trim()}',
+    ];
+    return parts.join(', ');
+  }
+
+  factory OrderAddress.fromJson(Map<String, dynamic> json) => OrderAddress(
+        name: asString(json, const ['name']),
+        phone: asString(json, const ['phone']),
+        email: asStringOrNull(json, const ['email']),
+        lat: asDoubleOrNull(json, const ['lat', 'latitude']),
+        lng: asDoubleOrNull(json, const ['lng', 'longitude']),
+        governorateId: asIntOrNull(json, const ['governorate_id']),
+        areaId: asIntOrNull(json, const ['area_id']),
+        areaName: asString(json, const ['areaName', 'area_name', 'area']),
+        block: asString(json, const ['block']),
+        street: asString(json, const ['street']),
+        building: asString(json, const ['building']),
+        floor: asString(json, const ['floor']),
+        // Confirmed live typo on the real response: "appartment" (double
+        // p), not "apartment" — kept as a fallback candidate alongside the
+        // correctly-spelled form and "flat" in case it's ever fixed
+        // server-side.
+        flat: asString(json, const ['flat', 'appartment', 'apartment']),
+      );
+}
+
 class Order {
   /// Order code from the backend, e.g. "APM30995" — used as the primary key
   /// everywhere (`/track?code=`, `/acct/order/{code}`).
@@ -164,18 +251,56 @@ class Order {
   /// `items` there is a bare integer count (e.g. `"items": 1`), completely
   /// different in shape from the detail endpoint's `items` (a full array
   /// of line objects that this SAME model also parses into [groups] for
-  /// that case). Since this class is shared between both responses, and
-  /// the list response has no groups/line-items to actually sum a real
-  /// quantity from, [itemCount] used to always compute 0 for any order
-  /// loaded via the list endpoint — this holds that raw count as a
-  /// fallback for exactly that case.
-  final int? apiItemCount;
+  /// that case). This is the real, authoritative item count — [itemCount]
+  /// uses it directly rather than deriving one; it's genuinely an ITEM
+  /// count (how many distinct items), not a quantity count (how many
+  /// units total), and the API already knows the difference even when
+  /// this class has to guess from a detail response's line entries.
+  ///
+  /// Mutable, not `final`: the detail endpoint's response has no
+  /// equivalent field at all (its `items` is the line-objects array, not a
+  /// number), so a detail fetch's own [Order] always parses this as null.
+  /// [OrdersState._preserveLocalState] carries the list's original value
+  /// forward onto the freshly-fetched detail copy — without that, opening
+  /// an order's detail screen and going back would permanently replace a
+  /// correct count with however many line entries the detail response
+  /// happens to break the order into, which needn't be the same number.
+  int? apiItemCount;
   /// ✅ Confirmed live on `GET /my-orders`: `"pharmacies": 1` — same
   /// situation as [apiItemCount] above: the list endpoint gives a bare
   /// count instead of the detail endpoint's actual per-pharmacy [groups]
-  /// array, so `groups.length` alone can't tell how many pharmacies an
-  /// order loaded via the list endpoint actually has.
-  final int? apiPharmacyCount;
+  /// array. Mutable for the same reason as [apiItemCount] — see its doc.
+  int? apiPharmacyCount;
+  /// Confirmed live (2026-07-31): `delivery_charge` and top-level
+  /// `discount` — neither was parsed before, so the order total (which
+  /// already includes both) had no breakdown to show alongside it. Only
+  /// on the detail endpoint, same situation as [apiItemCount] — mutable so
+  /// [OrdersState._preserveLocalState] can carry them forward across a
+  /// list re-fetch, which would otherwise wipe them back to 0.
+  double deliveryCharge;
+  double discount;
+  /// Confirmed live — a direct signal for whether ANY cancel/return
+  /// request is currently pending on this order, distinct from
+  /// [cancelRequests]/[returnRequests] (the actual per-request list, only
+  /// populated once those are separately fetched/submitted this session).
+  /// Not yet used to change any display logic — just captured for now.
+  /// Detail-only, mutable for the same reason as above.
+  bool hasPendingCancel;
+  bool hasPendingReturn;
+  /// Confirmed live as `"unpaid"`/presumably `"paid"` on the detail
+  /// endpoint — a payment STATUS, not a payment METHOD like [pay] (knet/
+  /// card/wallet/cod) claims to hold. The same JSON key (`payment`) is used
+  /// for both concepts depending on which endpoint sends it (or possibly
+  /// this detail endpoint simply doesn't expose the method at all) — kept
+  /// as its own field rather than overloading [pay], which nothing
+  /// currently displays but shouldn't be fed a status string regardless.
+  /// Detail-only, mutable for the same reason as above.
+  String? paymentStatus;
+  /// The delivery address embedded directly on `GET /acct/order/{code}`'s
+  /// response (confirmed live, 2026-07-31) — see [OrderAddress]'s own doc.
+  /// Null on the list endpoint's lighter shape, which doesn't include this
+  /// — mutable for the same reason as above.
+  OrderAddress? deliveryAddress;
 
   Order({
     required this.id,
@@ -192,10 +317,34 @@ class Order {
     List<OrderRequest>? cancelRequests,
     List<OrderRequest>? returnRequests,
     this.insuranceCover = 0,
+    this.deliveryCharge = 0,
+    this.discount = 0,
+    this.hasPendingCancel = false,
+    this.hasPendingReturn = false,
+    this.paymentStatus,
+    this.deliveryAddress,
   })  : cancelRequests = cancelRequests ?? [],
         returnRequests = returnRequests ?? [];
 
   List<OrderItemLine> get allItems => groups.expand((g) => g.items).toList();
+
+  /// Confirmed live as `payment_method`/`payment_type` on the order detail
+  /// endpoint (2026-07-31) — same short codes checkout_screen.dart already
+  /// uses when placing an order (knet/card/wallet/cod), formatted for
+  /// display here rather than showing the raw code.
+  String get payLabel {
+    switch (pay) {
+      case 'knet':
+        return 'KNET';
+      case 'card':
+        return 'Card';
+      case 'wallet':
+        return 'Wallet';
+      case 'cod':
+      default:
+        return 'Cash on delivery';
+    }
+  }
 
   /// Items from [allItems] not yet covered by ANY request in [requests] —
   /// matched by [OrderItemLine.detailId], the item's own stable row id.
@@ -257,10 +406,14 @@ class Order {
   Map<String, List<OrderItemLine>> get cancelStatusGroups => _statusGroups(cancelRequests, isReturn: false);
   Map<String, List<OrderItemLine>> get returnStatusGroups => _statusGroups(returnRequests, isReturn: true);
 
-  int get itemCount {
-    final summed = groups.fold(0, (sum, g) => sum + g.items.fold(0, (s, i) => s + i.qty));
-    return summed > 0 ? summed : (apiItemCount ?? 0);
-  }
+  /// The API's own item count — not something derived from summing line
+  /// quantities, which conflates "how many distinct items" with "how many
+  /// units total" (an order of 8 units of ONE product is 1 item, not 8).
+  /// [allItems.length] (a plain count of line entries, still not a
+  /// quantity sum) is only a last resort for the rare case where no API
+  /// count is known at all — e.g. an order somehow viewed on its detail
+  /// screen without ever having come from the list first.
+  int get itemCount => apiItemCount ?? allItems.length;
 
   int get pharmacyCount => groups.isNotEmpty ? groups.length : (apiPharmacyCount ?? 0);
 
@@ -304,7 +457,7 @@ class Order {
       id: asString(json, const ['code', 'id']),
       ts: DateTime.tryParse(asString(json, const ['created_at', 'date', 'ts'])) ?? DateTime.now(),
       total: asDouble(json, const ['total']),
-      pay: asString(json, const ['payment', 'pay'], fallback: 'cod'),
+      pay: asString(json, const ['payment_method', 'payment_type', 'pay'], fallback: 'cod'),
       status: _normalizeStatus(raw),
       rawStatus: raw,
       groups: groups,
@@ -314,6 +467,12 @@ class Order {
       apiItemCount: (json['items'] is num) ? (json['items'] as num).toInt() : null,
       apiPharmacyCount: (json['pharmacies'] is num) ? (json['pharmacies'] as num).toInt() : null,
       insuranceCover: asDouble(json, const ['insurance_cover']),
+      deliveryCharge: asDouble(json, const ['delivery_charge', 'delivery_fee']),
+      discount: asDouble(json, const ['discount']),
+      hasPendingCancel: asBool(json, const ['has_pending_cancel']),
+      hasPendingReturn: asBool(json, const ['has_pending_return']),
+      paymentStatus: asStringOrNull(json, const ['payment_status']) ?? (json['payment'] is String && (json['payment'] == 'paid' || json['payment'] == 'unpaid') ? json['payment'] as String : null),
+      deliveryAddress: (json['address'] is Map) ? OrderAddress.fromJson((json['address'] as Map).cast<String, dynamic>()) : null,
     );
   }
 }
@@ -338,11 +497,15 @@ class TrackInfo {
   final String status;
   final String rawStatus;
   final String? riderName;
-  /// Field name is an unconfirmed guess (`rider_phone`/`driver_phone`) —
-  /// confirm against a real response once an order actually has a rider
-  /// assigned. Needed so "Call rider" can place a real call instead of
-  /// just showing a "Calling rider…" toast that doesn't call anyone.
+  /// Confirmed live (2026-07-30): nested under a `driver` object
+  /// (`{id, name, phone, vehicle_type, plate_number}`), not flat
+  /// `rider_phone`/`driver_phone` fields on the root — those never
+  /// existed, which is why "Call rider" could never actually place a call
+  /// before this (see track_screen.dart's `_callRider`, which already had
+  /// the real `tel:` dialing logic ready and waiting on this).
   final String? riderPhone;
+  final String? vehicleType;
+  final String? plateNumber;
   final String? eta;
   final double? lat;
   final double? lng;
@@ -353,6 +516,8 @@ class TrackInfo {
     required this.rawStatus,
     this.riderName,
     this.riderPhone,
+    this.vehicleType,
+    this.plateNumber,
     this.eta,
     this.lat,
     this.lng,
@@ -360,12 +525,15 @@ class TrackInfo {
 
   factory TrackInfo.fromJson(Map<String, dynamic> json) {
     final raw = asString(json, const ['status']);
+    final driver = (json['driver'] is Map) ? (json['driver'] as Map).cast<String, dynamic>() : const <String, dynamic>{};
     return TrackInfo(
       code: asString(json, const ['code']),
       status: Order._normalizeStatus(raw),
       rawStatus: raw,
-      riderName: asStringOrNull(json, const ['rider_name', 'driver_name']),
-      riderPhone: asStringOrNull(json, const ['rider_phone', 'driver_phone']),
+      riderName: asStringOrNull(driver, const ['name']),
+      riderPhone: asStringOrNull(driver, const ['phone']),
+      vehicleType: asStringOrNull(driver, const ['vehicle_type']),
+      plateNumber: asStringOrNull(driver, const ['plate_number']),
       eta: asStringOrNull(json, const ['eta']),
       lat: asDoubleOrNull(json, const ['lat', 'latitude']),
       lng: asDoubleOrNull(json, const ['lng', 'longitude']),
