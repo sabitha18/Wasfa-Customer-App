@@ -47,7 +47,7 @@ class CheckoutInitData {
   /// distinct from [appliedCouponCode]: a promotion can apply automatically
   /// based on cart conditions (see [Promotion.conditionType]) without the
   /// person ever typing a code.
-  final Promotion? appliedPromo;
+  final AppliedPromo? appliedPromo;
   final CheckoutSummary summary;
 
   const CheckoutInitData({
@@ -79,7 +79,7 @@ class CheckoutInitData {
       walletBalance: asDouble(data, const ['wallet_balance']),
       promotions: asList(data, const ['promotions']).map((e) => Promotion.fromJson(e as Map<String, dynamic>)).toList(),
       appliedCouponCode: asStringOrNull(data, const ['coupon']),
-      appliedPromo: (data['applied_promo'] is Map) ? Promotion.fromJson((data['applied_promo'] as Map).cast<String, dynamic>()) : null,
+      appliedPromo: (data['applied_promo'] is Map) ? AppliedPromo.fromJson((data['applied_promo'] as Map).cast<String, dynamic>()) : null,
       summary: CheckoutSummary.fromJson((data['summary'] as Map?)?.cast<String, dynamic>() ?? const {}),
     );
   }
@@ -135,6 +135,15 @@ class CheckoutCartItem {
 class DeliverySlot {
   final int id;
   final String title;
+  /// ✅ `title_ar` confirmed added (2026-09-18) — but the one real example
+  /// seen has it set to the EXACT same string as [title] ("From 4:00 PM
+  /// till 8:00 PM" in both) — the field exists now, but this particular
+  /// slot's actual Arabic translation hasn't been entered yet, just a copy
+  /// of the English text. [titleFor] uses it as-is regardless (once a real
+  /// translation is entered on a slot, it'll show correctly with no app
+  /// change needed) — but don't expect this specific slot to visibly
+  /// change until its own `title_ar` value actually differs.
+  final String? titleAr;
   final double amount;
   /// `free_or_paid` — confirmed present but always null in every example
   /// seen so far; meaning/values unconfirmed. Kept as a raw string in case
@@ -142,11 +151,14 @@ class DeliverySlot {
   /// example shows up.
   final String? freeOrPaid;
 
-  const DeliverySlot({required this.id, required this.title, required this.amount, this.freeOrPaid});
+  const DeliverySlot({required this.id, required this.title, this.titleAr, required this.amount, this.freeOrPaid});
+
+  String titleFor(bool arabic) => (arabic && (titleAr?.trim().isNotEmpty ?? false)) ? titleAr! : title;
 
   factory DeliverySlot.fromJson(Map<String, dynamic> json) => DeliverySlot(
         id: asInt(json, const ['id']),
         title: asString(json, const ['title']),
+        titleAr: asStringOrNull(json, const ['title_ar']),
         amount: asDouble(json, const ['amount']),
         freeOrPaid: asStringOrNull(json, const ['free_or_paid']),
       );
@@ -212,6 +224,39 @@ class KnetConfig {
 /// (via `POST /app/promo-code/apply`), or automatically once the cart
 /// meets [conditionType]/[conditionValue] (via `POST /app/promotion/apply`
 /// with this promotion's [id] — e.g. `condition_type: "min_items"`).
+/// `applied_promo` on `/app/checkout` — confirmed live (2026-09-22):
+/// `{ type, promotion_id, label, discount }`. A COMPLETELY different,
+/// simpler shape than a `promotions[]` list item ([Promotion] below) — no
+/// `id` (it's `promotion_id`), and no separate code/title at all: `label`
+/// here is the promotion's own NAME (e.g. "testpromo"), not the ready-made
+/// discount-description text `Promotion.label` holds (like "KWD 2.000
+/// off"). This used to be parsed via `Promotion.fromJson`, which silently
+/// produced an empty-looking object (id: 0, title: '', and critically
+/// promoCode: null, since none of Promotion's fields exist in this shape)
+/// — confirmed live: that's exactly why the "Promo code" row kept showing
+/// "Enter a promo code" even once a real discount was already showing
+/// correctly in the Order Summary right below it. There's no code here to
+/// type/remove by — an auto-applied promotion (this is [checkout_init]'s
+/// no-code auto-apply, not a person-entered coupon) isn't something the
+/// existing code-based remove endpoint can undo at all; see
+/// checkout_screen.dart's `hasApplied` for why "Remove applied code" is
+/// only offered for a genuine typed coupon, not this.
+class AppliedPromo {
+  final String type;
+  final int promotionId;
+  final String label;
+  final double discount;
+
+  const AppliedPromo({required this.type, required this.promotionId, required this.label, required this.discount});
+
+  factory AppliedPromo.fromJson(Map<String, dynamic> json) => AppliedPromo(
+        type: asString(json, const ['type']),
+        promotionId: asInt(json, const ['promotion_id']),
+        label: asString(json, const ['label']),
+        discount: asDouble(json, const ['discount']),
+      );
+}
+
 class Promotion {
   final int id;
   final String title;
@@ -273,11 +318,18 @@ class Promotion {
   });
 
   /// A real response had several rows with `offer_type: null`,
-  /// `condition_type: null`, `offer_value: 0` — these look like disabled/
-  /// draft dashboard entries rather than live offers. Filters those out of
-  /// any "available offers" list shown to a person, rather than showing a
-  /// promo tile that does nothing if tapped.
-  bool get isActive => (offerType == 'fixed_amount' || offerType == 'percent') && offerValue > 0;
+  /// `condition_type: null`, `offer_value: 0` — genuine draft/disabled
+  /// dashboard entries, correctly excluded by requiring `offerValue > 0`.
+  /// This used to ALSO require `offerType` to be exactly 'fixed_amount' or
+  /// 'percent' — but a real live promotion (`id: 16`, "test2", 20% off)
+  /// had `offer_type: "A percent amount discount"` — a human-readable
+  /// description, not that machine key — while still carrying a real
+  /// non-zero `discount` (0.02) and a ready `label` ("20% off"). That
+  /// wording check wrongly treated a live, server-confirmed offer as
+  /// inactive/draft, hiding it from checkout entirely. `offerValue > 0` is
+  /// the actual confirmed signal of a configured, live offer; `offerType`'s
+  /// exact wording isn't a stable enum to match against.
+  bool get isActive => offerValue > 0;
 
   /// Whether this needs the person to type a code, vs. applying
   /// automatically once the cart qualifies.

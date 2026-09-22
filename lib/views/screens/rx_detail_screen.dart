@@ -11,6 +11,7 @@ import '../../data/repositories/catalog_repository.dart';
 import '../../data/services/account_service.dart';
 import '../../state/auth_state.dart';
 import '../../state/cart_state.dart';
+import '../../state/locale_state.dart';
 import '../widgets/page_header.dart';
 import '../widgets/toast.dart';
 
@@ -71,12 +72,13 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
   }
 
   Future<void> _load() async {
+    final ar = context.read<LocaleState>().isArabic;
     final auth = context.read<AuthState>();
     final userId = auth.userId;
     if (userId == null) {
       setState(() {
         _loading = false;
-        _error = _rx == null ? 'Please sign in to view this prescription.' : null;
+        _error = _rx == null ? (ar ? 'يرجى تسجيل الدخول لعرض هذه الوصفة.' : 'Please sign in to view this prescription.') : null;
       });
       return;
     }
@@ -91,7 +93,9 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
       // (the My Rx list this screen was opened from).
       setState(() {
         _loading = false;
-        _error = 'This prescription has no id to load — check the My Rx list entry it was opened from.';
+        _error = ar
+            ? 'لا يوجد رقم تعريفي لهذه الوصفة — تحقق من العنصر في قائمة وصفاتي الطبية الذي تم فتحه منه.'
+            : 'This prescription has no id to load — check the My Rx list entry it was opened from.';
       });
       return;
     }
@@ -129,12 +133,13 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
   /// the Request Price card in [build]), so there's no risk of
   /// double-requesting an already-requested rx.
   Future<void> _requestPrices(BuildContext context) async {
+    final ar = context.read<LocaleState>().isArabic;
     final rx = _rx;
     if (rx == null) return;
     final auth = context.read<AuthState>();
     if (auth.userId == null) return;
     if (rx.id.isEmpty) {
-      showErrorToast(context, 'This prescription is missing its id — can\'t request pricing yet.');
+      showErrorToast(context, ar ? 'هذه الوصفة تفتقد إلى رقم تعريفي — لا يمكن طلب السعر بعد.' : 'This prescription is missing its id — can\'t request pricing yet.');
       return;
     }
     setState(() => _requesting = true);
@@ -147,7 +152,7 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
         _rx = fresh;
         _requesting = false;
       });
-      if (context.mounted) showToast(context, 'Prices requested');
+      if (context.mounted) showToast(context, ar ? 'تم طلب الأسعار' : 'Prices requested');
     } catch (e) {
       if (mounted) setState(() => _requesting = false);
       if (context.mounted) showErrorToast(context, describeError(e));
@@ -158,11 +163,16 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
   Widget build(BuildContext context) {
     final rx = _rx;
     final cart = context.watch<CartState>();
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
 
     if (rx == null) {
-      return Scaffold(
-        appBar: PageHeader(title: 'Prescription'),
-        body: _loading ? const LoadingView() : ErrorRetryView(message: _error ?? 'Prescription not found', onRetry: _load),
+      return Directionality(
+        textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+        child: Scaffold(
+        appBar: PageHeader(title: t('Prescription', 'الوصفة')),
+        body: _loading ? const LoadingView() : ErrorRetryView(message: _error ?? t('Prescription not found', 'لم يتم العثور على الوصفة'), onRetry: _load),
+        ),
       );
     }
 
@@ -177,7 +187,9 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
     // robust than depending on a status flag that may not even apply here.
     final hasAddableItems = rx.isPriced && rx.items.any((it) => it.sellers.isNotEmpty && !it.restricted && it.sellers.any((s) => s.stock));
 
-    return Scaffold(
+    return Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: Scaffold(
       backgroundColor: AppColors.bg,
       appBar: PageHeader(title: rx.id),
       body: ListView(
@@ -190,10 +202,10 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
             decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: AppColors.shSm),
             child: Column(children: [
-              _MetaRow(label: 'Doctor', value: Formatters.orDash(rx.doctorLine), showDivider: true),
-              _MetaRow(label: 'Clinic', value: Formatters.orDash(rx.clinic), showDivider: true),
-              _MetaRow(label: 'Diagnosis', value: Formatters.orDash(rx.diagnosis), showDivider: true),
-              _MetaRow(label: 'Date', value: Formatters.displayDate(rx.date), showDivider: false),
+              _MetaRow(label: t('Doctor', 'الطبيب'), value: Formatters.orDash(rx.doctorLine), showDivider: true),
+              _MetaRow(label: t('Clinic', 'العيادة'), value: Formatters.orDash(rx.clinic), showDivider: true),
+              _MetaRow(label: t('Diagnosis', 'التشخيص'), value: Formatters.orDash(rx.diagnosis), showDivider: true),
+              _MetaRow(label: t('Date', 'التاريخ'), value: Formatters.displayDate(rx.date), showDivider: false),
             ]),
           ),
           if (rx.note.trim().isNotEmpty) ...[
@@ -205,7 +217,7 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Note', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: AppColors.muted)),
+                  Text(t('Note', 'ملاحظة'), style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: AppColors.muted)),
                   const SizedBox(height: 4),
                   Text(rx.note, style: const TextStyle(fontSize: 13, color: AppColors.ink)),
                 ],
@@ -217,9 +229,9 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
             // Real prescriptions can come back with no items attached yet
             // (still being transcribed) — show that plainly instead of a
             // blank gap where the item cards and "Add all" bar would be.
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
-              child: Text('No items have been added to this prescription yet.', style: TextStyle(color: AppColors.muted, fontSize: 12.5)),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(t('No items have been added to this prescription yet.', 'لم تتم إضافة أي عناصر إلى هذه الوصفة بعد.'), style: const TextStyle(color: AppColors.muted, fontSize: 12.5)),
             )
           else ...[
             for (var i = 0; i < rx.items.length; i++)
@@ -232,16 +244,16 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
                 margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                 padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
                 decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: AppColors.shSm),
-                child: const Column(
+                child: Column(
                   children: [
-                    Text('⏳', style: TextStyle(fontSize: 32)),
-                    SizedBox(height: 10),
-                    Text('Price request sent', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: AppColors.navy)),
-                    SizedBox(height: 6),
+                    const Text('⏳', style: TextStyle(fontSize: 32)),
+                    const SizedBox(height: 10),
+                    Text(t('Price request sent', 'تم إرسال طلب السعر'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: AppColors.navy)),
+                    const SizedBox(height: 6),
                     Text(
-                      'Our pharmacist is reviewing your prescription and will submit pricing shortly.',
+                      t('Our pharmacist is reviewing your prescription and will submit pricing shortly.', 'يقوم الصيدلي بمراجعة وصفتك وسيقدم الأسعار قريباً.'),
                       textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 12.5, color: AppColors.muted),
+                      style: const TextStyle(fontSize: 12.5, color: AppColors.muted),
                     ),
                   ],
                 ),
@@ -260,10 +272,10 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
                 decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: AppColors.shSm),
                 child: Column(
                   children: [
-                    const Text(
-                      'Your prescription is under pharmacist review. Request pricing to speed up the process.',
+                    Text(
+                      t('Your prescription is under pharmacist review. Request pricing to speed up the process.', 'وصفتك قيد مراجعة الصيدلي. اطلب التسعير لتسريع العملية.'),
                       textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 12.5, color: AppColors.muted),
+                      style: const TextStyle(fontSize: 12.5, color: AppColors.muted),
                     ),
                     const SizedBox(height: 14),
                     SizedBox(
@@ -277,7 +289,7 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
                           elevation: 0,
                         ),
                         onPressed: _requesting ? null : () => _requestPrices(context),
-                        child: Text(_requesting ? 'Requesting…' : 'Request Price', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                        child: Text(_requesting ? t('Requesting…', 'جارٍ الطلب…') : t('Request Price', 'طلب السعر'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                       ),
                     ),
                   ],
@@ -287,10 +299,12 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
         ],
       ),
       bottomNavigationBar: _buildDock(context, cart, rx, hasAddableItems),
+      ),
     );
   }
 
   Widget? _buildDock(BuildContext context, CartState cart, Prescription rx, bool hasAddableItems) {
+    final ar = context.read<LocaleState>().isArabic;
     if (hasAddableItems) {
       return _Dock(
         child: SizedBox(
@@ -304,12 +318,12 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
               elevation: 0,
             ),
             onPressed: () => _addAll(context, cart, rx),
-            child: const Row(
+            child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.shopping_bag_outlined, size: 17),
-                SizedBox(width: 8),
-                Text('Add all to RX cart', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                const Icon(Icons.shopping_bag_outlined, size: 17),
+                const SizedBox(width: 8),
+                Text(ar ? 'إضافة الكل إلى سلة الوصفات' : 'Add all to RX cart', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
               ],
             ),
           ),
@@ -332,6 +346,7 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
   /// server-cart re-fetch (there's no confirmed response shape yet to
   /// render as source-of-truth — see AccountService.addToRxCart).
   Future<void> _addItem(BuildContext context, CartState cart, Prescription rx, int idx) async {
+    final ar = context.read<LocaleState>().isArabic;
     final item = rx.items[idx];
     if (!rx.isPriced) return; // can't add before admin actually submits pricing
     if (item.sellers.isEmpty) return;
@@ -340,14 +355,14 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
     if (seller == null) return; // no seller available for this item — nothing to add
     if (!seller.stock) return; // out of stock — matches the UI, which doesn't show an Add button for this case at all
     if (item.id.isEmpty) {
-      showErrorToast(context, 'This item is missing an id — can\'t add it to your Rx cart yet.');
+      showErrorToast(context, ar ? 'هذا العنصر يفتقد إلى رقم تعريفي — لا يمكن إضافته إلى سلة الوصفات بعد.' : 'This item is missing an id — can\'t add it to your Rx cart yet.');
       return;
     }
     if (rx.id.isEmpty) {
       // Fail loudly instead of sending an empty prescription_id — the
       // backend rejects that with "user_id and prescription_id required"
       // and silently doing nothing would be more confusing than an error.
-      showErrorToast(context, 'This prescription is missing its id — can\'t add to cart yet.');
+      showErrorToast(context, ar ? 'هذه الوصفة تفتقد إلى رقم تعريفي — لا يمكن إضافتها إلى السلة بعد.' : 'This prescription is missing its id — can\'t add to cart yet.');
       return;
     }
     final auth = context.read<AuthState>();
@@ -372,7 +387,7 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
         inStock: seller.stock,
       );
       cart.notifyListeners();
-      if (context.mounted) showToast(context, 'Added to Rx cart');
+      if (context.mounted) showToast(context, ar ? 'تمت الإضافة إلى سلة الوصفات' : 'Added to Rx cart');
     } catch (e) {
       if (context.mounted) showErrorToast(context, describeError(e));
     }
@@ -382,10 +397,11 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
   /// single `item_ids[]` array rather than one request per item, matching
   /// the confirmed request shape.
   Future<void> _addAll(BuildContext context, CartState cart, Prescription rx) async {
+    final ar = context.read<LocaleState>().isArabic;
     final auth = context.read<AuthState>();
     if (auth.userId == null) return;
     if (rx.id.isEmpty) {
-      showErrorToast(context, 'This prescription is missing its id — can\'t add to cart yet.');
+      showErrorToast(context, ar ? 'هذه الوصفة تفتقد إلى رقم تعريفي — لا يمكن إضافتها إلى السلة بعد.' : 'This prescription is missing its id — can\'t add to cart yet.');
       return;
     }
 
@@ -472,7 +488,7 @@ class _MetaRow extends StatelessWidget {
       ),
       child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
         Text(label, style: const TextStyle(color: AppColors.muted, fontSize: 12.5)),
-        Flexible(child: Text(value, textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5, color: AppColors.navy))),
+        Flexible(child: Text(value, textAlign: TextAlign.end, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5, color: AppColors.navy))),
       ]),
     );
   }
@@ -486,6 +502,7 @@ class _RxItemCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ar = context.watch<LocaleState>().isArabic;
     final item = rx.items[index];
     // Was just `item.sellers.isNotEmpty` before — that let pharmacy/price/
     // Add show up whenever an item happened to have seller data attached
@@ -559,8 +576,8 @@ class _RxItemCard extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(color: AppColors.blush, borderRadius: BorderRadius.circular(10)),
-              child: const Text('Restricted · Pickup Only', textAlign: TextAlign.center,
-                  style: TextStyle(color: AppColors.rose, fontSize: 12, fontWeight: FontWeight.w700)),
+              child: Text(ar ? 'مقيّد · استلام فقط' : 'Restricted · Pickup Only', textAlign: TextAlign.center,
+                  style: const TextStyle(color: AppColors.rose, fontSize: 12, fontWeight: FontWeight.w700)),
             )
           else if (!restricted && stockSel != null && !stockSel.stock) ...[
             // ── Out of stock — the only/best-priced seller for this item
@@ -574,8 +591,8 @@ class _RxItemCard extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(color: const Color(0xFFFFF4E0), borderRadius: BorderRadius.circular(10)),
-              child: const Text('⚠ Out of stock', textAlign: TextAlign.center,
-                  style: TextStyle(color: Color(0xFFB8720A), fontSize: 12, fontWeight: FontWeight.w700)),
+              child: Text(ar ? '⚠ غير متوفر' : '⚠ Out of stock', textAlign: TextAlign.center,
+                  style: const TextStyle(color: Color(0xFFB8720A), fontSize: 12, fontWeight: FontWeight.w700)),
             ),
             if (priced) ...[
               // Confirmed against a real "Price Submitted" prescription
@@ -636,7 +653,7 @@ class _RxItemCard extends StatelessWidget {
                   children: [
                     const Icon(Icons.add, size: 16),
                     const SizedBox(width: 6),
-                    Text('Add · ${Formatters.money(sel.price)}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+                    Text('${ar ? "إضافة" : "Add"} · ${Formatters.money(sel.price)}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
                   ],
                 ),
               ),

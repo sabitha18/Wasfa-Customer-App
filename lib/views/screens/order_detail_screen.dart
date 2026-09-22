@@ -4,13 +4,34 @@ import '../../core/routing/app_routes.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/async_state_view.dart';
+import '../../data/models/order.dart';
 import '../../data/repositories/catalog_repository.dart';
+import '../../state/address_state.dart';
 import '../../state/auth_state.dart';
 import '../../state/cart_state.dart';
+import '../../state/locale_state.dart';
 import '../../state/orders_state.dart';
 import '../widgets/page_header.dart';
+import '../widgets/review_sheet.dart';
 import 'request_flow_screen.dart';
 import 'track_screen.dart';
+
+/// `OrderAddress.formatted` skips the area name entirely when it's blank
+/// — true for a real `/acct/order/{code}` response (2026-09-18) where
+/// `governorate`/`area` come back as bare numeric ids with no name
+/// anywhere in that object at all (see OrderAddress.fromJson's doc).
+/// Resolves the real name from the area catalog (already loaded
+/// elsewhere, for delivery-fee purposes) in that case, reusing
+/// `formatted`'s own block/street/building join for the rest rather than
+/// re-implementing it here too.
+String _formattedDeliveryAddress(BuildContext context, OrderAddress a) {
+  final rest = a.formatted;
+  if (a.areaName.trim().isNotEmpty || a.areaId == null) return rest;
+  final area = context.read<AddressState>().areaCatalog.findArea(a.areaId!);
+  if (area == null) return rest;
+  final name = area.label(context.read<LocaleState>().isArabic);
+  return rest.isEmpty ? name : '$name, $rest';
+}
 
 class OrderDetailScreen extends StatefulWidget {
   final String orderId;
@@ -31,6 +52,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   Future<void> _load() async {
+    final ar = context.read<LocaleState>().isArabic;
     final auth = context.read<AuthState>();
     if (!auth.isSignedIn) {
       setState(() => _loading = false);
@@ -41,7 +63,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     if (!mounted) return;
     setState(() {
       _loading = false;
-      _error = result == null ? 'Couldn\'t load this order.' : null;
+      _error = result == null ? (ar ? 'تعذر تحميل هذا الطلب.' : 'Couldn\'t load this order.') : null;
     });
   }
 
@@ -49,23 +71,38 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   Widget build(BuildContext context) {
     final orders = context.watch<OrdersState>();
     final order = orders.byId(widget.orderId);
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
 
     if (_loading && order == null) {
-      return Scaffold(appBar: PageHeader(title: 'Order details'), body: const LoadingView(message: 'Loading order…'));
+      return Directionality(
+        textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+        child: Scaffold(appBar: PageHeader(title: t('Order details', 'تفاصيل الطلب')), body: LoadingView(message: t('Loading order…', 'جارٍ تحميل الطلب…'))),
+      );
     }
     if (order == null) {
-      return Scaffold(
-        appBar: PageHeader(title: 'Order details'),
-        body: ErrorRetryView(message: _error ?? 'Order not found.', onRetry: _load),
+      return Directionality(
+        textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+        child: Scaffold(
+        appBar: PageHeader(title: t('Order details', 'تفاصيل الطلب')),
+        body: ErrorRetryView(message: _error ?? t('Order not found.', 'لم يتم العثور على الطلب.'), onRetry: _load),
+        ),
       );
     }
     // Matches the HTML's labels array — st_conf/st_prep/st_way/st_done.
-    const labels = ['Order confirmed', 'Preparing your order', 'On the way', 'Delivered'];
+    final labels = [
+      t('Order confirmed', 'تم تأكيد الطلب'),
+      t('Preparing your order', 'جارٍ تحضير طلبك'),
+      t('On the way', 'في الطريق'),
+      t('Delivered', 'تم التوصيل'),
+    ];
     final idx = {'conf': 0, 'prep': 1, 'way': 2, 'done': 3}[order.status] ?? 1;
 
-    return Scaffold(
+    return Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: PageHeader(title: 'Order details'),
+      appBar: PageHeader(title: t('Order details', 'تفاصيل الطلب')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -88,7 +125,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation<Color>(AppColors.sky)),
                 ),
                 const SizedBox(width: 8),
-                Text('Refreshing…', style: const TextStyle(fontSize: 12, color: AppColors.muted, fontWeight: FontWeight.w600)),
+                Text(t('Refreshing…', 'جارٍ التحديث…'), style: const TextStyle(fontSize: 12, color: AppColors.muted, fontWeight: FontWeight.w600)),
               ]),
             ),
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
@@ -99,7 +136,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(color: order.status == 'done' ? const Color(0xFFE7F8F0) : AppColors.blush, borderRadius: BorderRadius.circular(20)),
-              child: Text(order.status == 'done' ? 'Delivered' : (order.status == 'way' ? 'On the way' : 'Preparing'),
+              child: Text(order.status == 'done' ? t('Delivered', 'تم التوصيل') : (order.status == 'way' ? t('On the way', 'في الطريق') : t('Preparing', 'قيد التحضير')),
                   style: TextStyle(color: order.status == 'done' ? AppColors.ok : AppColors.rose, fontWeight: FontWeight.w700, fontSize: 11)),
             ),
           ]),
@@ -153,7 +190,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                                     ? it.name
                                     : (it.productId != null
                                         ? (CatalogRepository.instance.findProduct(it.productId!)?.nameEn ?? '#${it.productId}')
-                                        : 'Item'),
+                                        : t('Item', 'عنصر')),
                                 style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                               ),
                               Text('×${it.qty} · ${Formatters.money(it.price)}', style: const TextStyle(fontSize: 11, color: AppColors.muted)),
@@ -162,7 +199,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                                   decoration: BoxDecoration(color: AppColors.blush, borderRadius: BorderRadius.circular(6)),
-                                  child: const Text('Restricted · Pickup Only', style: TextStyle(color: AppColors.rose, fontSize: 10, fontWeight: FontWeight.w700)),
+                                  child: Text(t('Restricted · Pickup Only', 'مقيّد · استلام فقط'), style: const TextStyle(color: AppColors.rose, fontSize: 10, fontWeight: FontWeight.w700)),
                                 ),
                               ],
                               if (!it.restricted && !it.inStock) ...[
@@ -175,9 +212,32 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                                   decoration: BoxDecoration(color: AppColors.blush, borderRadius: BorderRadius.circular(6)),
-                                  child: const Text('Out of stock', style: TextStyle(color: AppColors.rose, fontSize: 10, fontWeight: FontWeight.w700)),
+                                  child: Text(t('Out of stock', 'غير متوفر'), style: const TextStyle(color: AppColors.rose, fontSize: 10, fontWeight: FontWeight.w700)),
                                 ),
                               ],
+                              // A second, inherently-verified way to leave a
+                              // product review (confirmed live `sku` on
+                              // order items, 2026-09-18) — getting here at
+                              // all means this item is in an order that's
+                              // actually this person's own and actually
+                              // delivered, so no separate can_review check
+                              // is needed the way the PDP's own review
+                              // button requires. Prefers this line's own
+                              // item_status over the whole order's status,
+                              // since a multi-pharmacy order can have some
+                              // items delivered before others.
+                              if ((it.itemStatus?.toLowerCase() == 'delivered' || (it.itemStatus == null && order.status == 'done')) && (it.sku?.isNotEmpty ?? false))
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: GestureDetector(
+                                    onTap: () => openReviewSheet(context, sku: it.sku!, productName: it.name),
+                                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                      const Icon(Icons.star_border_rounded, size: 13, color: AppColors.sky),
+                                      const SizedBox(width: 3),
+                                      Text(t('Review this item', 'قيّم هذا المنتج'), style: const TextStyle(color: AppColors.sky, fontSize: 11, fontWeight: FontWeight.w700)),
+                                    ]),
+                                  ),
+                                ),
                             ],
                           ),
                         ),
@@ -196,18 +256,18 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             final subtotal = order.allItems.fold(0.0, (s, it) => s + it.price * it.qty);
             return Column(children: [
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text('Subtotal', style: TextStyle(fontSize: 13, color: AppColors.muted)),
+                Text(t('Subtotal', 'المجموع الفرعي'), style: const TextStyle(fontSize: 13, color: AppColors.muted)),
                 Text(Formatters.money(subtotal), style: const TextStyle(fontSize: 13, color: AppColors.ink)),
               ]),
               const SizedBox(height: 4),
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text('Delivery', style: TextStyle(fontSize: 13, color: AppColors.muted)),
-                Text(order.deliveryCharge == 0 ? 'Free' : Formatters.money(order.deliveryCharge), style: const TextStyle(fontSize: 13, color: AppColors.ink)),
+                Text(t('Delivery', 'التوصيل'), style: const TextStyle(fontSize: 13, color: AppColors.muted)),
+                Text(order.deliveryCharge == 0 ? t('Free', 'مجاني') : Formatters.money(order.deliveryCharge), style: const TextStyle(fontSize: 13, color: AppColors.ink)),
               ]),
               if (order.discount > 0) ...[
                 const SizedBox(height: 4),
                 Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                  const Text('Discount', style: TextStyle(fontSize: 13, color: AppColors.muted)),
+                  Text(t('Discount', 'الخصم'), style: const TextStyle(fontSize: 13, color: AppColors.muted)),
                   Text('−${Formatters.money(order.discount)}', style: const TextStyle(fontSize: 13, color: AppColors.rose, fontWeight: FontWeight.w700)),
                 ]),
               ],
@@ -215,13 +275,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               // Confirmed live (payment_method/payment_type, 2026-07-31) —
               // never shown anywhere before this.
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text('Payment', style: TextStyle(fontSize: 13, color: AppColors.muted)),
+                Text(t('Payment', 'الدفع'), style: const TextStyle(fontSize: 13, color: AppColors.muted)),
                 Row(children: [
-                  Text(order.payLabel, style: const TextStyle(fontSize: 13, color: AppColors.ink)),
+                  Text(order.payLabel(ar), style: const TextStyle(fontSize: 13, color: AppColors.ink)),
                   if (order.paymentStatus != null) ...[
                     const SizedBox(width: 5),
                     Text(
-                      '· ${order.paymentStatus == 'paid' ? 'Paid' : 'Unpaid'}',
+                      '· ${order.paymentStatus == 'paid' ? t('Paid', 'مدفوع') : t('Unpaid', 'غير مدفوع')}',
                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: order.paymentStatus == 'paid' ? AppColors.ok : AppColors.rose),
                     ),
                   ],
@@ -229,7 +289,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               ]),
               const SizedBox(height: 8),
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text('Total', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.navy)),
+                Text(t('Total', 'الإجمالي'), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.navy)),
                 Text(Formatters.money(order.total), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17, color: AppColors.navy)),
               ]),
             ]);
@@ -243,20 +303,67 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: AppColors.shSm),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('Delivered to', style: TextStyle(fontSize: 12, color: AppColors.muted, fontWeight: FontWeight.w600)),
+                Text(t('Delivered to', 'تم التوصيل إلى'), style: const TextStyle(fontSize: 12, color: AppColors.muted, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 6),
                 Text(order.deliveryAddress!.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5, color: AppColors.navy)),
                 const SizedBox(height: 2),
-                Text(order.deliveryAddress!.formatted, style: const TextStyle(fontSize: 12.5, color: AppColors.ink, height: 1.4)),
+                Text(_formattedDeliveryAddress(context, order.deliveryAddress!), style: const TextStyle(fontSize: 12.5, color: AppColors.ink, height: 1.4)),
                 const SizedBox(height: 2),
                 Text(order.deliveryAddress!.phone, style: const TextStyle(fontSize: 12.5, color: AppColors.muted)),
               ]),
             ),
           ],
+          if (order.buildingPhotos.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            // Reference photos of the delivery location — confirmed live
+            // (2026-09-18), never shown anywhere before this. Likely taken
+            // by the rider on a previous delivery, for whoever delivers
+            // here next to find the right building/entrance.
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: AppColors.shSm),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(t('Building photos', 'صور المبنى'), style: const TextStyle(fontSize: 12, color: AppColors.muted, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 84,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: order.buildingPhotos.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 8),
+                    itemBuilder: (context, i) {
+                      final photo = order.buildingPhotos[i];
+                      return GestureDetector(
+                        onTap: () => showDialog(
+                          context: context,
+                          builder: (_) => Dialog(
+                            backgroundColor: Colors.black,
+                            insetPadding: const EdgeInsets.all(12),
+                            child: InteractiveViewer(
+                              child: Image.network(photo.url, errorBuilder: (_, __, ___) => const SizedBox(height: 200)),
+                            ),
+                          ),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Image.network(
+                            photo.url,
+                            width: 84, height: 84,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(width: 84, height: 84, color: AppColors.bg),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ]),
+            ),
+          ],
           for (final entry in order.cancelStatusGroups.entries)
-            _RequestBanner(label: 'Cancellation request (${entry.value.length} item${entry.value.length == 1 ? '' : 's'})', status: entry.key),
+            _RequestBanner(label: t('Cancellation request (${entry.value.length} item${entry.value.length == 1 ? '' : 's'})', 'طلب إلغاء (${entry.value.length} عنصر)'), status: entry.key),
           for (final entry in order.returnStatusGroups.entries)
-            _RequestBanner(label: 'Return request (${entry.value.length} item${entry.value.length == 1 ? '' : 's'})', status: entry.key),
+            _RequestBanner(label: t('Return request (${entry.value.length} item${entry.value.length == 1 ? '' : 's'})', 'طلب إرجاع (${entry.value.length} عنصر)'), status: entry.key),
           const SizedBox(height: 16),
           Row(children: [
             if (order.status == 'done')
@@ -267,27 +374,27 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     final messenger = ScaffoldMessenger.of(context);
                     final String msg;
                     if (r.added == 0) {
-                      msg = 'These items are no longer available to reorder.';
+                      msg = t('These items are no longer available to reorder.', 'هذه العناصر لم تعد متوفرة لإعادة الطلب.');
                     } else if (r.skipped > 0) {
                       // Was "... no longer available" unconditionally — now
                       // covers restricted (pickup-only) items too, which
                       // ARE still available, just not through cart reorder.
-                      msg = 'Added ${r.added} item(s) to cart · ${r.skipped} couldn\'t be reordered';
+                      msg = t('Added ${r.added} item(s) to cart · ${r.skipped} couldn\'t be reordered', 'تمت إضافة ${r.added} عنصر إلى السلة · تعذر إعادة طلب ${r.skipped}');
                     } else {
-                      msg = 'Added to cart';
+                      msg = t('Added to cart', 'أُضيف للسلة');
                     }
                     messenger.showSnackBar(SnackBar(content: Text(msg)));
                     if (r.added > 0) Navigator.pushNamed(context, Routes.cart);
                   },
                   icon: const Icon(Icons.add_rounded, size: 16),
-                  label: const Text('Reorder'),
+                  label: Text(t('Reorder', 'إعادة الطلب')),
                 ),
               ),
             if (order.status == 'done') const SizedBox(width: 10),
             Expanded(
               child: ElevatedButton(
                 onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => TrackScreen(orderId: order.id))),
-                child: const Text('Track'),
+                child: Text(t('Track', 'تتبع')),
               ),
             ),
           ]),
@@ -301,15 +408,16 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             OutlinedButton(
               style: OutlinedButton.styleFrom(foregroundColor: AppColors.danger, side: const BorderSide(color: AppColors.danger)),
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => RequestFlowScreen(orderId: order.id, type: 'cancel'))),
-              child: const Text('Cancel order'),
+              child: Text(t('Cancel order', 'إلغاء الطلب')),
             ),
           if (order.status == 'done' && order.remainingForReturn.isNotEmpty)
             OutlinedButton.icon(
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => RequestFlowScreen(orderId: order.id, type: 'return'))),
               icon: const Icon(Icons.assignment_return_outlined, size: 16),
-              label: const Text('Return / Refund request'),
+              label: Text(t('Return / Refund request', 'طلب إرجاع / استرداد')),
             ),
         ],
+      ),
       ),
     );
   }

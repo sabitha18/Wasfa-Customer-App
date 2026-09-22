@@ -14,6 +14,7 @@ import 'state/auth_state.dart';
 import 'state/cart_state.dart';
 import 'state/locale_state.dart';
 import 'state/location_state.dart';
+import 'state/nav_tab_state.dart';
 import 'state/orders_state.dart';
 
 Future<void> main() async {
@@ -25,22 +26,30 @@ Future<void> main() async {
   // below is what can actually hang.
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   runApp(const WasfaApp());
-  // NOT awaited before runApp(): NotificationService.initialize() calls
-  // FirebaseMessaging.instance.requestPermission()/getInitialMessage(),
-  // both of which go through Google Play Services under the hood on
-  // Android. Most emulator images (anything not explicitly tagged "Google
-  // Play", just "Google APIs") don't have Play Services installed, and
-  // these calls can hang indefinitely with no exception, no timeout, and
-  // no log output at all when it's missing — this used to be awaited
-  // BEFORE runApp(), so that hang blocked Flutter from rendering anything
-  // whatsoever, showing as "stuck on splash" forever with nothing in
-  // logcat to explain why (a real device with Play Services, or a
-  // "Google Play" emulator image, never hit this). Runs in the background
-  // now — push notifications simply aren't wired up yet for the first
-  // moment or two the app is open, which is a fine tradeoff since the UI
-  // is fully usable immediately regardless of whether this ever
-  // completes.
-  NotificationService.instance.initialize();
+  // NotificationService.instance.initialize() is deliberately NOT started
+  // here anymore — see SplashScreen._boot(), which is where it's called
+  // now.
+  //
+  // It used to fire right here, unawaited, immediately after runApp() —
+  // which raced against the location permission request the splash
+  // screen makes moments later. Android only allows one permission dialog
+  // on screen at a time; when both landed together, whichever one lost
+  // the race got silently cancelled by the OS. That alone would just mean
+  // "permission denied" — except Geolocator.requestPermission() has a
+  // known bug where, in exactly this situation, it never returns at all
+  // instead of resolving to denied
+  // (github.com/Baseflow/flutter-geolocator/issues/1378, unfixed as of
+  // this writing). The result: the whole app hung on the splash screen
+  // forever, with nothing in logcat except "Can request only one set of
+  // permissions at a time" — no crash, no timeout, no error. Only showed
+  // up on a real device / an emulator image with Play Services actually
+  // installed, which is also why the original comment here only mentioned
+  // Play-Services-missing emulators hanging — that was a real, separate
+  // failure mode, just not the only one this needed to guard against.
+  //
+  // Starting it from the splash screen instead, after location's own
+  // permission cycle has already resolved, means there's never a second
+  // permission dialog in flight to collide with in the first place.
 }
 
 class WasfaApp extends StatelessWidget {
@@ -60,6 +69,10 @@ class WasfaApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => CartState()),
         ChangeNotifierProvider(create: (_) => OrdersState()),
         ChangeNotifierProvider(create: (_) => AddressState()),
+        // Which of RootShell's 4 tabs is active — see NavTabState's doc for
+        // why this lives here rather than as RootShell's own local State
+        // (Store, pushed on top of RootShell, needs to switch tabs too).
+        ChangeNotifierProvider(create: (_) => NavTabState()),
         // Not calling .load() for now — /app/settings isn't a real backend
         // endpoint yet (see AppSettingsState's doc). The team's checkout
         // API will provide this once it's ready; wire .load() back in

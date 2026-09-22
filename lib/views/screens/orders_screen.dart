@@ -7,6 +7,7 @@ import '../../core/widgets/async_state_view.dart';
 import '../../data/models/order.dart';
 import '../../state/auth_state.dart';
 import '../../state/cart_state.dart';
+import '../../state/locale_state.dart';
 import '../../state/orders_state.dart';
 import '../widgets/page_header.dart';
 import '../widgets/toast.dart';
@@ -38,10 +39,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthState>();
     final orders = context.watch<OrdersState>();
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
 
     if (!auth.isSignedIn) {
-      return Scaffold(
-        appBar: PageHeader(title: 'My orders'),
+      return Directionality(
+        textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+        child: Scaffold(
+        appBar: PageHeader(title: t('My orders', 'طلباتي')),
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
@@ -50,7 +55,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
               children: [
                 const Text('📦', style: TextStyle(fontSize: 34)),
                 const SizedBox(height: 10),
-                const Text('Sign in to see your orders', style: TextStyle(color: AppColors.muted)),
+                Text(t('Sign in to see your orders', 'سجّل الدخول لعرض طلباتك'), style: const TextStyle(color: AppColors.muted)),
                 const SizedBox(height: 14),
                 ElevatedButton(
                   onPressed: () async {
@@ -58,27 +63,30 @@ class _OrdersScreenState extends State<OrdersScreen> {
                     if (ok == true) _load();
                   },
                   style: ElevatedButton.styleFrom(backgroundColor: AppColors.navy, foregroundColor: Colors.white),
-                  child: const Text('Sign in'),
+                  child: Text(t('Sign in', 'تسجيل الدخول')),
                 ),
               ],
             ),
           ),
         ),
+        ),
       );
     }
 
-    return Scaffold(
-      appBar: PageHeader(title: 'My orders'),
+    return Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: Scaffold(
+      appBar: PageHeader(title: t('My orders', 'طلباتي')),
       body: RefreshIndicator(
         onRefresh: () => orders.loadMyOrders(auth.userId!),
         child: (orders.ordersLoading && orders.orders.isEmpty)
-            ? const LoadingView(message: 'Loading your orders…')
+            ? LoadingView(message: t('Loading your orders…', 'جارٍ تحميل طلباتك…'))
             : (orders.ordersError != null && orders.orders.isEmpty)
                 ? ErrorRetryView(message: orders.ordersError!, onRetry: () => orders.loadMyOrders(auth.userId!))
                 : orders.orders.isEmpty
-            ? ListView(children: const [
-                SizedBox(height: 120),
-                Center(child: Text('No orders yet', style: TextStyle(color: AppColors.muted))),
+            ? ListView(children: [
+                const SizedBox(height: 120),
+                Center(child: Text(t('No orders yet', 'لا توجد طلبات بعد'), style: const TextStyle(color: AppColors.muted))),
               ])
             : ListView.separated(
                 padding: const EdgeInsets.all(16),
@@ -93,6 +101,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                 },
               ),
       ),
+      ),
     );
   }
 }
@@ -101,10 +110,14 @@ class _OrderCard extends StatelessWidget {
   final Order order;
   const _OrderCard({required this.order});
 
-  String get _statusLabel => {'prep': 'Preparing', 'way': 'On the way', 'done': 'Delivered'}[order.status] ?? 'Preparing';
+  String _statusLabel(bool ar) => ar
+      ? const {'prep': 'قيد التحضير', 'way': 'في الطريق', 'done': 'تم التوصيل'}[order.status] ?? 'قيد التحضير'
+      : const {'prep': 'Preparing', 'way': 'On the way', 'done': 'Delivered'}[order.status] ?? 'Preparing';
 
   @override
   Widget build(BuildContext context) {
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
     return GestureDetector(
       onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => OrderDetailScreen(orderId: order.id))),
       child: Container(
@@ -121,7 +134,7 @@ class _OrderCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(color: order.status == 'done' ? const Color(0xFFE7F8F0) : AppColors.blush, borderRadius: BorderRadius.circular(20)),
-                child: Text(_statusLabel, style: TextStyle(color: order.status == 'done' ? AppColors.ok : AppColors.rose, fontWeight: FontWeight.w700, fontSize: 11)),
+                child: Text(_statusLabel(ar), style: TextStyle(color: order.status == 'done' ? AppColors.ok : AppColors.rose, fontWeight: FontWeight.w700, fontSize: 11)),
               ),
             ]),
             const SizedBox(height: 10),
@@ -132,16 +145,16 @@ class _OrderCard extends StatelessWidget {
                 // groups breakdown to count directly (the list endpoint's
                 // shape) — no longer needs to omit this for list orders.
                 order.pharmacyCount > 0
-                    ? '${Formatters.money(order.total)} · ${order.itemCount} items · ${order.pharmacyCount} 🏪'
-                    : '${Formatters.money(order.total)} · ${order.itemCount} items',
+                    ? '${Formatters.money(order.total)} · ${order.itemCount} ${t("items", "عناصر")} · ${order.pharmacyCount} 🏪'
+                    : '${Formatters.money(order.total)} · ${order.itemCount} ${t("items", "عناصر")}',
                 style: const TextStyle(fontSize: 12.5),
               ),
               InkWell(
                 onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => TrackScreen(orderId: order.id))),
-                child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                  Text('Track', style: TextStyle(color: AppColors.sky, fontWeight: FontWeight.w700, fontSize: 12.5)),
-                  SizedBox(width: 3),
-                  Icon(Icons.chevron_right_rounded, color: AppColors.sky, size: 16),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text(t('Track', 'تتبع'), style: const TextStyle(color: AppColors.sky, fontWeight: FontWeight.w700, fontSize: 12.5)),
+                  const SizedBox(width: 3),
+                  Icon(ar ? Icons.chevron_left_rounded : Icons.chevron_right_rounded, color: AppColors.sky, size: 16),
                 ]),
               ),
             ]),
@@ -157,29 +170,29 @@ class _OrderCard extends StatelessWidget {
                       final r = context.read<OrdersState>().reorderInto(context.read<CartState>(), order.id);
                       final String msg;
                       if (r.added == 0) {
-                        msg = 'These items are no longer available to reorder.';
+                        msg = t('These items are no longer available to reorder.', 'هذه العناصر لم تعد متوفرة لإعادة الطلب.');
                       } else if (r.skipped > 0) {
-                        msg = 'Added ${r.added} item(s) to cart · ${r.skipped} no longer available';
+                        msg = t('Added ${r.added} item(s) to cart · ${r.skipped} no longer available', 'تمت إضافة ${r.added} عنصر إلى السلة · ${r.skipped} لم يعد متوفراً');
                       } else {
-                        msg = 'Added to cart';
+                        msg = t('Added to cart', 'أُضيف للسلة');
                       }
                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
                     },
-                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.add_rounded, size: 16, color: AppColors.navy),
-                      SizedBox(width: 5),
-                      Text('Reorder', style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.w700, fontSize: 12.5)),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.add_rounded, size: 16, color: AppColors.navy),
+                      const SizedBox(width: 5),
+                      Text(t('Reorder', 'إعادة الطلب'), style: const TextStyle(color: AppColors.navy, fontWeight: FontWeight.w700, fontSize: 12.5)),
                     ]),
                   ),
                   const SizedBox(width: 18),
                   if (order.rating != null)
-                    Text('${'★' * order.rating!}${'☆' * (5 - order.rating!)} Rated', style: const TextStyle(color: AppColors.star, fontWeight: FontWeight.w700, fontSize: 12))
+                    Text('${'★' * order.rating!}${'☆' * (5 - order.rating!)} ${t("Rated", "تم التقييم")}', style: const TextStyle(color: AppColors.star, fontWeight: FontWeight.w700, fontSize: 12))
                   else
                     InkWell(
                       onTap: () => _rate(context, order.id),
-                      child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                        Text('⭐ ', style: TextStyle(fontSize: 12.5)),
-                        Text('Rate order', style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.w700, fontSize: 12.5)),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        const Text('⭐ ', style: TextStyle(fontSize: 12.5)),
+                        Text(t('Rate order', 'تقييم الطلب'), style: const TextStyle(color: AppColors.navy, fontWeight: FontWeight.w700, fontSize: 12.5)),
                       ]),
                     ),
                 ]),
@@ -191,6 +204,7 @@ class _OrderCard extends StatelessWidget {
   }
 
   void _rate(BuildContext context, String orderId) {
+    final ar = context.read<LocaleState>().isArabic;
     int stars = 0;
     final reviewCtrl = TextEditingController();
     showModalBottomSheet(
@@ -198,7 +212,9 @@ class _OrderCard extends StatelessWidget {
       isScrollControlled: true,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
-      builder: (sheetContext) => StatefulBuilder(
+      builder: (sheetContext) => Directionality(
+        textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+        child: StatefulBuilder(
         builder: (context, setState) => Padding(
           padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
           child: SafeArea(
@@ -209,7 +225,7 @@ class _OrderCard extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
                 decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.line, width: 1))),
                 child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                  const Text('⭐ Rate order', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 17, color: AppColors.navy)),
+                  Text(ar ? '⭐ تقييم الطلب' : '⭐ Rate order', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17, color: AppColors.navy)),
                   InkWell(
                     onTap: () => Navigator.pop(sheetContext),
                     borderRadius: BorderRadius.circular(9),
@@ -226,7 +242,7 @@ class _OrderCard extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(18, 12, 18, 6),
                 child: Column(children: [
-                  const Text('How was your experience with this order?', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, color: AppColors.muted)),
+                  Text(ar ? 'كيف كانت تجربتك مع هذا الطلب؟' : 'How was your experience with this order?', textAlign: TextAlign.center, style: const TextStyle(fontSize: 13, color: AppColors.muted)),
                   const SizedBox(height: 8),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -241,7 +257,7 @@ class _OrderCard extends StatelessWidget {
                     minLines: 3,
                     maxLines: 4,
                     decoration: InputDecoration(
-                      hintText: 'Share your experience (optional)',
+                      hintText: ar ? 'شارك تجربتك (اختياري)' : 'Share your experience (optional)',
                       contentPadding: const EdgeInsets.all(11),
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.line)),
                       enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.line)),
@@ -269,7 +285,7 @@ class _OrderCard extends StatelessWidget {
                     // "submit does nothing").
                     onPressed: () async {
                       if (stars == 0) {
-                        showErrorToast(sheetContext, 'Pick a rating');
+                        showErrorToast(sheetContext, ar ? 'اختر تقييماً' : 'Pick a rating');
                         return;
                       }
                       final userId = context.read<AuthState>().userId;
@@ -278,17 +294,18 @@ class _OrderCard extends StatelessWidget {
                         await context.read<OrdersState>().rateOrder(orderId, stars, userId: userId, review: reviewCtrl.text.trim());
                         if (!sheetContext.mounted) return;
                         Navigator.pop(sheetContext);
-                        showToast(context, 'Thanks for your feedback!');
+                        showToast(context, ar ? 'شكراً على ملاحظاتك!' : 'Thanks for your feedback!');
                       } catch (e) {
                         if (sheetContext.mounted) showErrorToast(sheetContext, describeError(e));
                       }
                     },
-                    child: const Text('Submit rating', style: TextStyle(fontWeight: FontWeight.w700)),
+                    child: Text(ar ? 'إرسال التقييم' : 'Submit rating', style: const TextStyle(fontWeight: FontWeight.w700)),
                   ),
                 ),
               ),
             ]),
           ),
+        ),
         ),
       ),
     );

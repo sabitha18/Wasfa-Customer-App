@@ -11,7 +11,7 @@
          this manifest entry present. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
-        android:label="wasfa_app"
+        android:label="Wasfa Rx"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <!-- Google Maps needs this key at runtime. Replace YOUR_ANDROID_MAPS_API_KEY

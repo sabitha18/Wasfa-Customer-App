@@ -60,6 +60,15 @@ class HomeBannerButton {
 /// title/sub/buttons and just a full-bleed image). `device` isn't parsed
 /// here since the app only ever receives its own `device=app` banners in
 /// the first place.
+///
+/// ✅ `link_type`/`link_ref`/`link_target` confirmed added (2026-09-22):
+/// a real banner had `link_type: "category"`, `link_ref: 540`,
+/// `link_target: "Air Filters & Humidifiers"` — a SEPARATE destination
+/// for the banner/image itself, distinct from whatever a `buttons[]`
+/// entry's own `link` points to. Only `"category"` is confirmed so far;
+/// _BannerCard in home_screen.dart falls back to the button's plain
+/// `link` for any other/missing `link_type`, rather than guessing a
+/// mapping for types that haven't actually been confirmed yet.
 class HomeBanner {
   final String title;
   final String sub;
@@ -67,6 +76,9 @@ class HomeBanner {
   final String emoji;
   final String imageUrl;
   final bool imageClickable;
+  final String? linkType;
+  final int? linkRef;
+  final String? linkTarget;
 
   const HomeBanner({
     this.title = '',
@@ -75,6 +87,9 @@ class HomeBanner {
     this.emoji = '',
     this.imageUrl = '',
     this.imageClickable = false,
+    this.linkType,
+    this.linkRef,
+    this.linkTarget,
   });
 
   factory HomeBanner.fromJson(Map<String, dynamic> json) => HomeBanner(
@@ -84,6 +99,9 @@ class HomeBanner {
         emoji: asString(json, const ['emoji']),
         imageUrl: asString(json, const ['image']),
         imageClickable: asBool(json, const ['image_clickable']),
+        linkType: asStringOrNull(json, const ['link_type']),
+        linkRef: asIntOrNull(json, const ['link_ref']),
+        linkTarget: asStringOrNull(json, const ['link_target']),
       );
 }
 

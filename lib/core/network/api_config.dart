@@ -6,7 +6,7 @@ class ApiConfig {
   ApiConfig._();
 
   /// Postman collection variable `base_url`.
-  static const String baseUrl = 'https://portal.apixservices.com';
+  static const String baseUrl = 'https://apixrx.com';
 
   /// Everything below is relative to `$baseUrl/api/v1`.
   static const String apiVersion = '/api/v1';
@@ -20,6 +20,15 @@ class ApiConfig {
   static const String stores = '/app/stores'; // ✅ live — returns { stores: [...] }
   static const String products = '/app/products';
   static String product(String sku) => '/app/product/$sku';
+  /// Confirmed live in the updated Postman collection (2026-09-17):
+  /// `POST /app/product/{sku}/review` — form-data body `rating`, `name`,
+  /// `email`, `user_id`, `comment`. No saved example response, so success
+  /// confirmation is inferred from the HTTP status alone (see
+  /// CatalogService.submitReview). The collection's own description text
+  /// on this endpoint is a stale copy-paste from the PDP endpoint's own
+  /// doc ("Adds sellers[]...") and doesn't actually describe this one —
+  /// going by the real configured request shape, not that text.
+  static String productReview(String sku) => '/app/product/$sku/review';
   static const String categories = '/app/categories'; // ✅ live — full nested category tree with children[]
   static const String areas = '/areas';
   static const String coupon = '/coupon';
@@ -114,4 +123,49 @@ class ApiConfig {
   static const String acctNotifications = '/app/acct/notifications';
   static const String acctNotificationRead = '/app/acct/notifications/read';
   static const String acctNotificationReadAll = '/app/acct/notifications/read-all';
+
+  // ---- Legal / static content --------------------------------------------
+  /// ✅ Confirmed live for all 5 slugs (2026-09-16, real responses):
+  /// `{ slug, title, content, phone, email, address }` — no `ok`/`data`
+  /// wrapper, flat object. 'faq' also carries an empty, unused `faqs: []`
+  /// alongside — ignored by LegalPage.fromJson, which only reads the 5
+  /// fields above. 'terms' uses `<b>` for bold (not `<strong>`, which
+  /// 'about' used) — the renderer matches both rather than assuming the
+  /// CMS is consistent about which one it emits. 'privacy'`s `content` is
+  /// Word/Outlook-exported HTML (MsoNormal classes, `<o:p>`,
+  /// `<!--[endif]-->` conditional comments, raw `\r\n` line-wraps baked
+  /// into the sentence text itself, collapsed to spaces before rendering).
+  /// 'help' is the odd one out: its `content` isn't page text at all — a
+  /// Google Maps link to the office — so account_screen.dart's
+  /// "Help & support" row doesn't render it through the HTML sheet like
+  /// the other 4 at all; it dials `phone` directly instead, per explicit
+  /// request. No Arabic fields at all on any slug (`title`/`content` only
+  /// — no `title_ar`/`content_ar`) — unlike categories/products, this
+  /// content has no real translation from the API and always shows in
+  /// English regardless of the app's language toggle.
+  static String page(String slug) => '/app/page/$slug';
+
+  // ---- Delivery charge --------------------------------------------------
+  /// ✅ Confirmed live (2026-09-17): `{ ok, area_id, area, governorate_id,
+  /// delivery_charge, effective_charge, free_delivery_applied,
+  /// free_over_amount }` — see DeliveryCharge's doc for which field to
+  /// actually use. Anonymous — no user_id needed, works for a guest with
+  /// no saved addresses at all, picking an area for a new/unsaved address.
+  static const String deliveryChargeByArea = '/app/delivery-charge';
+  /// ✅ Confirmed live (2026-09-17) — same shape as [deliveryChargeByArea]
+  /// plus an echoed `address_id`, scoped to one specific saved address.
+  /// Call this the moment the person switches to a different saved
+  /// address so the shown fee updates immediately, rather than staying
+  /// stale until something else happens to refetch checkout data — nothing
+  /// else does this automatically, since checkoutInit only ever takes
+  /// `user_id` (no address override) and always reflects the account's
+  /// own default address, not necessarily whichever one is currently
+  /// selected client-side.
+  static String deliveryChargeByAddress(int addressId) => '/app/delivery-charge/address/$addressId';
+
+  // ---- Seller banners -----------------------------------------------------
+  /// ✅ Confirmed live (2026-09-17): `{ banners: [...] }` — see
+  /// SellerBanner's doc. Replaces the Store screen's old 3 hardcoded promo
+  /// cards, identical on every seller's page, with real per-store content.
+  static String sellerBanners(int shopId) => '/app/seller/$shopId/banners';
 }

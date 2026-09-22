@@ -1,4 +1,5 @@
 import '../../core/utils/json_utils.dart';
+import 'product_review.dart';
 import 'seller.dart';
 
 class Product {
@@ -25,6 +26,18 @@ class Product {
   final String scientificName;
   final String emoji; // placeholder "photo" (emoji) — swap for real asset later
   final String? imageUrl; // real product photo, once the API returns one
+  /// PROPOSED — NOT a confirmed live field. No `/app/products` response
+  /// seen so far includes a per-brand logo/image of any kind — every
+  /// product only ever carries its own plain `brand` name string, nothing
+  /// else about the brand. Parsed speculatively against a few likely
+  /// brand-specific key names (deliberately excluding 'image'/'image_url'/
+  /// 'photo' — those are already [imageUrl]'s own keys, and reusing them
+  /// here would wrongly show a product's own photo as if it were the
+  /// brand's logo) so this picks up automatically the moment backend adds
+  /// one, with zero code changes needed here. Null for every real product
+  /// today — see StoreViewModel.brandLogosInStore for the graceful
+  /// text-only fallback every brand tile currently shows.
+  final String? brandLogo;
   /// ✅ Confirmed live on the PDP (`GET /app/product/{sku}`): a gallery of
   /// additional photos beyond the single [imageUrl] hero shot. Not present
   /// on the PLP's list items — only ever populated after a full PDP fetch.
@@ -35,7 +48,64 @@ class Product {
   /// once a full PDP fetch has replaced [sellers] with the real list.
   final int? apiSellerCount;
   final double rating;
+  /// Was `asInt(json, const ['reviews', 'reviews_count'])` — but a real PDP
+  /// response has `reviews` holding the actual array of review OBJECTS
+  /// (see [reviewList]), not a count at all. Since that key still exists
+  /// (just with the wrong type), it got picked over `reviews_count` every
+  /// time, asInt couldn't make a number out of a List, and silently fell
+  /// back to 0 — every product with real reviews showed "0 reviews".
+  /// Fixed by checking the definitively-numeric field first.
   final int reviews;
+  /// The product's own real review entries — confirmed live on the PDP
+  /// (2026-09-17), `reviews[]`: `{ id, name, rating, comment, date }`. Not
+  /// present on the PLP's list items. See product_screen.dart for where
+  /// this replaced a fake, hardcoded 5-star percentage breakdown
+  /// (70/20/7/2/1 on every product regardless of its real distribution).
+  final List<ProductReview> reviewList;
+  /// Real product description HTML — confirmed live on the PDP
+  /// (2026-09-17). The PDP's "Description" and "How to use" accordions
+  /// used to show entirely fabricated text (a synthesized sentence built
+  /// from the product's own name/scientific-name, and a generic
+  /// boilerplate dosage warning) instead of this. A real response shows
+  /// "how to use" content isn't even a separate field — it's just more
+  /// prose inside this same HTML blob (e.g. "...</p>How To Use:<p>Use
+  /// Twice aday</p>") — so the fabricated separate "How to use" section
+  /// was removed rather than trying to split this apart to feed it.
+  final String description;
+  /// PROPOSED — confirmed present on the PDP (2026-09-17: `brand_id: 94`),
+  /// not yet confirmed on the PLP (`/app/products`) list items. This is
+  /// what ShopViewModel's brand filter would need to move server-side
+  /// (`/app/products`'s own `brand` param takes comma-separated brand
+  /// IDs, confirmed in the Postman Params tab) instead of the current
+  /// client-side name matching — holding off on that rewire until the
+  /// API team confirms the other open filter questions (see
+  /// area file), so this is just captured for when that's ready.
+  final int? brandId;
+  /// Same status as [brandId] — confirmed on the PDP (`category_id: 781`),
+  /// could make StoreViewModel's leaf-category-to-top-level matching
+  /// (currently by name string) more reliable if also confirmed on the PLP.
+  final int? categoryId;
+  /// Real units-sold counter. Confirmed on the PDP as `sold`; a real PLP
+  /// response (`/app/products`, 2026-09-17) uses a DIFFERENT key for the
+  /// same thing — `total_sold` — and confirms it's exactly what `sort=best`
+  /// orders by (items came back in strict descending `total_sold` order).
+  /// This is the real "best seller" signal StoreViewModel.bestSellers now
+  /// uses, replacing [isBestSeller] there (see its doc for why that was
+  /// never usable — no real response has ever included the `flags` field
+  /// it depends on).
+  final int? sold;
+  /// Confirmed live (2026-09-17) — exactly the verified-purchase signal
+  /// asked for after finding "Write a review" had zero eligibility check
+  /// at all (any signed-in person could review any product, whether they'd
+  /// ever ordered it or not). `true` only when this user has a delivered
+  /// order containing this product. See [alreadyReviewed] for the other
+  /// reason the button might not apply — the two need different UI (no
+  /// review option at all vs. "you already reviewed this").
+  final bool canReview;
+  /// Confirmed live alongside [canReview] (2026-09-17) — this user has
+  /// already left a review for this product. `reviewList` already
+  /// contains it if so; this just flags "don't offer to submit another".
+  final bool alreadyReviewed;
   final List<String> flags; // offer, best, new
   /// Guessed field names (`tag`/`promo_tag`) that never actually matched a
   /// real response — kept only for [isBogo]'s fallback and any content
@@ -87,10 +157,18 @@ class Product {
     required this.scientificName,
     required this.emoji,
     this.imageUrl,
+    this.brandLogo,
     this.photos = const [],
     this.apiSellerCount,
     required this.rating,
     required this.reviews,
+    this.reviewList = const [],
+    this.description = '',
+    this.brandId,
+    this.categoryId,
+    this.sold,
+    this.canReview = false,
+    this.alreadyReviewed = false,
     this.flags = const [],
     this.tag,
     this.bogoStatus = false,
@@ -111,6 +189,11 @@ class Product {
   /// (e.g. a Product built before this field existed, like the Rx flow's
   /// synthesized entries).
   bool get isOffer => offerStatus || flags.contains('offer') || sellers.any((s) => s.was != null);
+  /// Never true in practice — depends on a `flags` field no real
+  /// `/app/products` or `/app/product/{sku}` response has ever included.
+  /// Superseded by [sold]: StoreViewModel.bestSellers sorts by that
+  /// directly now (confirmed live, 2026-09-17) instead of checking this.
+  /// Kept only in case some other response shape does send `flags` one day.
   bool get isBestSeller => flags.contains('best');
 
   /// What to actually pass to `GET /app/product/{..}` — ✅ confirmed live
@@ -219,13 +302,26 @@ class Product {
       scientificName: asString(json, const ['scientific_name', 'generic_name']),
       emoji: asStringOrNull(json, const ['emoji']) ?? _categoryEmoji[category] ?? '💊',
       imageUrl: asStringOrNull(json, const ['image', 'image_url', 'photo']),
+      brandLogo: asStringOrNull(json, const ['brand_logo', 'brand_image', 'brand_icon', 'brand_photo', 'brand_logo_url']),
       photos: asList(json, const ['photos']).map((e) => e.toString()).where((s) => s.isNotEmpty).toList(),
       // Only trust `seller_count` as a display hint when this came from the
       // PLP (no full `sellers[]` array) — a PDP response's own sellers list
       // is the real, authoritative count.
       apiSellerCount: sellersJson.isEmpty ? asIntOrNull(json, const ['seller_count']) : null,
-      rating: asDouble(json, const ['rating', 'avg_rating']),
-      reviews: asInt(json, const ['reviews', 'reviews_count']),
+      rating: asDouble(json, const ['rating', 'avg_rating', 'reviews_avg']),
+      // Fixed order — see [reviews]'s doc for why 'reviews' (an array of
+      // review objects on a real PDP response) can't be checked first.
+      reviews: asInt(json, const ['reviews_count', 'reviews']),
+      reviewList: asList(json, const ['reviews'])
+          .whereType<Map<String, dynamic>>()
+          .map((e) => ProductReview.fromJson(e))
+          .toList(),
+      description: asString(json, const ['description']),
+      brandId: asIntOrNull(json, const ['brand_id']),
+      categoryId: asIntOrNull(json, const ['category_id']),
+      sold: asIntOrNull(json, const ['sold', 'total_sold']),
+      canReview: asBool(json, const ['can_review']),
+      alreadyReviewed: asBool(json, const ['already_reviewed']),
       flags: asList(json, const ['flags']).map((e) => e.toString()).toList(),
       tag: asStringOrNull(json, const ['tag', 'promo_tag']),
       bogoStatus: asBool(json, const ['bogo_status']),

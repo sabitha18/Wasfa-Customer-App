@@ -51,6 +51,13 @@ class OrderItemLine {
   /// Defaults true so an order predating this field (or a response that
   /// simply omits it for an in-stock item) doesn't wrongly block reordering.
   final bool inStock;
+  /// ✅ Confirmed live on `GET /acct/order/{code}` (2026-09-18) — needed to
+  /// call `POST /app/product/{sku}/review` from here (order_detail_screen.dart's
+  /// "Review this item"), a second, inherently-verified way to leave a
+  /// product review: getting here at all means this item is in an order
+  /// that's actually this person's own, no separate `can_review` check
+  /// needed the way the PDP's own review button does.
+  final String? sku;
   const OrderItemLine({
     this.productId,
     this.detailId,
@@ -67,6 +74,7 @@ class OrderItemLine {
     this.returnQty = 0,
     this.restricted = false,
     this.inStock = true,
+    this.sku,
   });
 
   factory OrderItemLine.fromJson(Map<String, dynamic> json) => OrderItemLine(
@@ -87,6 +95,7 @@ class OrderItemLine {
         returnQty: asInt(json, const ['return_qty'], fallback: 0),
         restricted: asBool(json, const ['restricted', 'is_restricted', 'pickup_only']),
         inStock: asBool(json, const ['in_stock', 'stock'], fallback: true),
+        sku: asStringOrNull(json, const ['sku']),
       );
 }
 
@@ -209,9 +218,22 @@ class OrderAddress {
         email: asStringOrNull(json, const ['email']),
         lat: asDoubleOrNull(json, const ['lat', 'latitude']),
         lng: asDoubleOrNull(json, const ['lng', 'longitude']),
-        governorateId: asIntOrNull(json, const ['governorate_id']),
-        areaId: asIntOrNull(json, const ['area_id']),
-        areaName: asString(json, const ['areaName', 'area_name', 'area']),
+        // A real `/acct/order/{code}` response (2026-09-18) sends
+        // `governorate`/`area` as BARE NUMERIC ids — no `_id` suffix, and
+        // no name string anywhere in this object at all. That's a genuine
+        // ambiguity: other address-bearing responses (e.g. checkout-init's
+        // `addresses[]`) use the SAME key `area` to hold an actual NAME
+        // string ("Salwa"). asIntOrNull/asString can't tell these apart by
+        // key name alone, so this checks the raw value's actual type
+        // instead — a number means an id with no name given at all; a
+        // string means a real name. Silently returning the string "12"
+        // (from a naive `.toString()`) as if it were the area's NAME was
+        // the actual bug this replaced — it would have shown as the
+        // literal digits "12" in the delivery address instead of a place
+        // name.
+        governorateId: asIntOrNull(json, const ['governorate_id']) ?? (json['governorate'] is num ? (json['governorate'] as num).toInt() : null),
+        areaId: asIntOrNull(json, const ['area_id']) ?? (json['area'] is num ? (json['area'] as num).toInt() : null),
+        areaName: asStringOrNull(json, const ['areaName', 'area_name']) ?? (json['area'] is String ? json['area'] as String : ''),
         block: asString(json, const ['block']),
         street: asString(json, const ['street']),
         building: asString(json, const ['building']),
@@ -221,6 +243,26 @@ class OrderAddress {
         // correctly-spelled form and "flat" in case it's ever fixed
         // server-side.
         flat: asString(json, const ['flat', 'appartment', 'apartment']),
+      );
+}
+
+/// One entry in a delivered order's `building_photos[]` — confirmed live
+/// on `GET /acct/order/{code}` (2026-09-18): `{ url, note, by, date }`.
+/// Reference photos of the delivery location (building/entrance), likely
+/// taken by the rider on a previous delivery — never parsed or shown
+/// anywhere before this.
+class OrderBuildingPhoto {
+  final String url;
+  final String? note;
+  final String? by;
+  final DateTime? date;
+  const OrderBuildingPhoto({required this.url, this.note, this.by, this.date});
+
+  factory OrderBuildingPhoto.fromJson(Map<String, dynamic> json) => OrderBuildingPhoto(
+        url: asString(json, const ['url']),
+        note: asStringOrNull(json, const ['note']),
+        by: asStringOrNull(json, const ['by']),
+        date: DateTime.tryParse(asString(json, const ['date'])),
       );
 }
 
@@ -301,6 +343,7 @@ class Order {
   /// Null on the list endpoint's lighter shape, which doesn't include this
   /// — mutable for the same reason as above.
   OrderAddress? deliveryAddress;
+  List<OrderBuildingPhoto> buildingPhotos;
 
   Order({
     required this.id,
@@ -323,6 +366,7 @@ class Order {
     this.hasPendingReturn = false,
     this.paymentStatus,
     this.deliveryAddress,
+    this.buildingPhotos = const [],
   })  : cancelRequests = cancelRequests ?? [],
         returnRequests = returnRequests ?? [];
 
@@ -332,17 +376,30 @@ class Order {
   /// endpoint (2026-07-31) — same short codes checkout_screen.dart already
   /// uses when placing an order (knet/card/wallet/cod), formatted for
   /// display here rather than showing the raw code.
-  String get payLabel {
+  /// Was a plain `switch` with `default: return 'Cash on delivery'` — a
+  /// real order (2026-09-18) has `payment_method: "go_tap"` (a real
+  /// payment gateway/POS provider, GoTap), which fell straight into that
+  /// default and showed "Cash on delivery" for an order that was actually
+  /// paid online (`payment: "paid"` on that same response). Confirmed,
+  /// actively misleading — showing 'go_tap' as a real button as a real
+  /// case now, and any OTHER unrecognized value shows its own raw name
+  /// (title-cased) instead of defaulting to a specific, possibly-wrong
+  /// claim like that. Also now localized — this whole screen otherwise
+  /// is, and a hardcoded English label here was the one inconsistency.
+  String payLabel(bool ar) {
     switch (pay) {
       case 'knet':
         return 'KNET';
       case 'card':
-        return 'Card';
+        return ar ? 'بطاقة' : 'Card';
       case 'wallet':
-        return 'Wallet';
+        return ar ? 'المحفظة' : 'Wallet';
+      case 'go_tap':
+        return 'GoTap';
       case 'cod':
+        return ar ? 'الدفع عند الاستلام' : 'Cash on delivery';
       default:
-        return 'Cash on delivery';
+        return pay.isEmpty ? (ar ? 'الدفع عند الاستلام' : 'Cash on delivery') : pay[0].toUpperCase() + pay.substring(1).replaceAll('_', ' ');
     }
   }
 
@@ -473,6 +530,7 @@ class Order {
       hasPendingReturn: asBool(json, const ['has_pending_return']),
       paymentStatus: asStringOrNull(json, const ['payment_status']) ?? (json['payment'] is String && (json['payment'] == 'paid' || json['payment'] == 'unpaid') ? json['payment'] as String : null),
       deliveryAddress: (json['address'] is Map) ? OrderAddress.fromJson((json['address'] as Map).cast<String, dynamic>()) : null,
+      buildingPhotos: asList(json, const ['building_photos']).map((e) => OrderBuildingPhoto.fromJson(e as Map<String, dynamic>)).toList(),
     );
   }
 }

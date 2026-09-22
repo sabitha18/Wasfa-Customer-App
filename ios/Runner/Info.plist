@@ -5,7 +5,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
-    <string>Wasfa App</string>
+    <string>Wasfa Rx</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>wasfa_app</string>
+    <string>Wasfa Rx</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -46,9 +46,9 @@
     <key>UIApplicationSupportsIndirectInputEvents</key>
     <true/>
     <key>NSCameraUsageDescription</key>
-    <string>WASFA needs camera access so you can attach a photo when requesting a return.</string>
+    <string>Wasfa Rx needs camera access so you can attach a photo when requesting a return.</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>WASFA needs photo library access so you can attach a product photo when requesting a return.</string>
+    <string>Wasfa Rx needs photo library access so you can attach a product photo when requesting a return.</string>
     <key>UIBackgroundModes</key>
     <array>
         <string>remote-notification</string>

@@ -7,9 +7,11 @@ import '../../core/widgets/async_state_view.dart';
 import '../../data/models/home_feed.dart';
 import '../../data/models/pharmacy_store.dart';
 import '../../state/address_state.dart';
+import '../../state/locale_state.dart';
 import '../../state/location_state.dart';
 import '../../viewmodels/home_view_model.dart';
 import '../../viewmodels/shop_view_model.dart';
+import 'shop_screen.dart';
 import '../widgets/section_header.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -45,6 +47,9 @@ class _HomeBody extends StatelessWidget {
     final vm = context.watch<HomeViewModel>();
     final location = context.watch<LocationState>();
     final addressState = context.watch<AddressState>();
+    final locale = context.watch<LocaleState>();
+    final ar = locale.isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
 
     // Keeps the "Nearest stores" list honest about wherever delivery is
     // ACTUALLY going right now — reactively — not just whatever was true
@@ -78,6 +83,7 @@ class _HomeBody extends StatelessWidget {
       vm.refreshStoresIfLocationChanged(lat, lng);
     });
 
+    Widget body;
     // Was rendering the full layout with every section already empty
     // (no categories, no banners, no product rails, no stores) while
     // GET /app/home and GET /app/stores were still in flight — looked
@@ -87,95 +93,101 @@ class _HomeBody extends StatelessWidget {
     // empty) — a background refresh with existing data already on screen
     // shouldn't wipe it all out again just to show a spinner.
     if (vm.isLoading && identical(vm.feed, HomeFeed.empty) && vm.stores.isEmpty) {
-      return const LoadingView(message: 'Loading…');
-    }
+      body = LoadingView(message: t('Loading…', 'جارٍ التحميل…'));
+    } else {
+      body = CustomScrollView(
+        slivers: [
+          // The home feed (deals/best/recent rails, categories, brands) comes
+          // from GET /app/home — it's fetched on load to warm the product
+          // cache for other screens. The store marketplace below is a
+          // separate fetch (GET /app/stores, confirmed live — see
+          // HomeViewModel.stores), so a feed fetch failure is shown as a
+          // small non-blocking banner rather than hiding the page.
+          if (vm.error != null)
+            SliverToBoxAdapter(
+              child: InlineErrorBanner(message: vm.error!, onRetry: vm.load),
+            ),
 
-    return CustomScrollView(
-      slivers: [
-        // The home feed (deals/best/recent rails, categories, brands) comes
-        // from GET /app/home — it's fetched on load to warm the product
-        // cache for other screens. The store marketplace below is a
-        // separate fetch (GET /app/stores, confirmed live — see
-        // HomeViewModel.stores), so a feed fetch failure is shown as a
-        // small non-blocking banner rather than hiding the page.
-        if (vm.error != null)
+          // ---- .carousel — promo banners, from GET /app/home's banners[] ----
+          // No dummy fallback: if the API sends no banners, this section
+          // shows nothing at all, rather than the 3 hardcoded promo cards
+          // that used to be here regardless of what the API actually said.
+          if (vm.feed.banners.isNotEmpty)
+            SliverToBoxAdapter(child: _BannerCarousel(banners: vm.feed.banners)),
+
+          // ---- .sec + .nearrail — "Nearest stores" -------------------------------
+          SliverToBoxAdapter(child: SectionHeader(title: t('Nearest stores', 'أقرب المتاجر'))),
           SliverToBoxAdapter(
-            child: InlineErrorBanner(message: vm.error!, onRetry: vm.load),
-          ),
-
-        // ---- .carousel — promo banners, from GET /app/home's banners[] ----
-        // No dummy fallback: if the API sends no banners, this section
-        // shows nothing at all, rather than the 3 hardcoded promo cards
-        // that used to be here regardless of what the API actually said.
-        if (vm.feed.banners.isNotEmpty)
-          SliverToBoxAdapter(child: _BannerCarousel(banners: vm.feed.banners)),
-
-        // ---- .sec + .nearrail — "Nearest stores" -------------------------------
-        const SliverToBoxAdapter(child: SectionHeader(title: 'Nearest stores')),
-        SliverToBoxAdapter(
-          child: SizedBox(
-            height: 195,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
-              itemCount: vm.nearestStores.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 12),
-              itemBuilder: (context, i) => _NearStoreCard(store: vm.nearestStores[i]),
-            ),
-          ),
-        ),
-
-        // ---- .sec — "Browse all stores" --------------------------------------
-        const SliverToBoxAdapter(child: SectionHeader(title: 'Browse all stores')),
-
-        // ---- .storefilters -----------------------------------------------------
-        SliverToBoxAdapter(
-          child: SizedBox(
-            height: 50,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.fromLTRB(16, 2, 16, 12),
-              children: [
-                _FilterChip(label: 'Offers', on: vm.storeFilters['offers']!, onTap: () => vm.toggleFilter('offers')),
-                _FilterChip(label: 'Under 30 mins', on: vm.storeFilters['under30']!, onTap: () => vm.toggleFilter('under30')),
-                _FilterChip(label: 'Free delivery', on: vm.storeFilters['free']!, onTap: () => vm.toggleFilter('free')),
-                _FilterChip(label: 'Pro', on: vm.storeFilters['pro']!, onTap: () => vm.toggleFilter('pro')),
-              ],
-            ),
-          ),
-        ),
-
-        // ---- #storeList ----------------------------------------------------------
-        if (vm.filteredStores.isEmpty)
-          const SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.symmetric(vertical: 40),
-              child: Center(
-                child: Column(children: [
-                  Text('🏪', style: TextStyle(fontSize: 34)),
-                  SizedBox(height: 10),
-                  Text('No products found', style: TextStyle(color: AppColors.muted)),
-                ]),
+            child: SizedBox(
+              height: 195,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+                itemCount: vm.nearestStores.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                itemBuilder: (context, i) => _NearStoreCard(store: vm.nearestStores[i]),
               ),
             ),
-          )
-        else
-          SliverList(
-            delegate: SliverChildBuilderDelegate(
-                  (context, i) {
-                final store = vm.filteredStores[i];
-                return _StoreRow(
-                  store: store,
-                  isLast: i == vm.filteredStores.length - 1,
-                  onTap: () => Navigator.pushNamed(context, Routes.store, arguments: store),
-                );
-              },
-              childCount: vm.filteredStores.length,
+          ),
+
+          // ---- .sec — "Browse all stores" --------------------------------------
+          SliverToBoxAdapter(child: SectionHeader(title: t('Browse all stores', 'تصفح جميع المتاجر'))),
+
+          // ---- .storefilters -----------------------------------------------------
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: 50,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.fromLTRB(16, 2, 16, 12),
+                children: [
+                  _FilterChip(label: t('Offers', 'العروض'), on: vm.storeFilters['offers']!, onTap: () => vm.toggleFilter('offers')),
+                  _FilterChip(label: t('Under 30 mins', 'أقل من 30 دقيقة'), on: vm.storeFilters['under30']!, onTap: () => vm.toggleFilter('under30')),
+                  _FilterChip(label: t('Free delivery', 'توصيل مجاني'), on: vm.storeFilters['free']!, onTap: () => vm.toggleFilter('free')),
+                  _FilterChip(label: t('Pro', 'مميز'), on: vm.storeFilters['pro']!, onTap: () => vm.toggleFilter('pro')),
+                ],
+              ),
             ),
           ),
-        const SliverToBoxAdapter(child: SizedBox(height: 90)),
-      ],
-    );
+
+          // ---- #storeList ----------------------------------------------------------
+          if (vm.filteredStores.isEmpty)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 40),
+                child: Center(
+                  child: Column(children: [
+                    const Text('🏪', style: TextStyle(fontSize: 34)),
+                    const SizedBox(height: 10),
+                    // Was "No products found" here — copied from a
+                    // different empty state — even though this is a list
+                    // of STORES, not products. Fixed alongside the
+                    // translation since it was directly in view.
+                    Text(t('No stores found', 'لم يتم العثور على متاجر'), style: const TextStyle(color: AppColors.muted)),
+                  ]),
+                ),
+              ),
+            )
+          else
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                    (context, i) {
+                  final store = vm.filteredStores[i];
+                  return _StoreRow(
+                    store: store,
+                    isLast: i == vm.filteredStores.length - 1,
+                    onTap: () => Navigator.pushNamed(context, Routes.store, arguments: store),
+                  );
+                },
+                childCount: vm.filteredStores.length,
+              ),
+            ),
+          const SliverToBoxAdapter(child: SizedBox(height: 90)),
+        ],
+      );
+    }
+
+    return Directionality(textDirection: ar ? TextDirection.rtl : TextDirection.ltr, child: body);
   }
 }
 
@@ -261,13 +273,25 @@ class _BannerCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasText = banner.title.isNotEmpty || banner.sub.isNotEmpty || banner.buttons.isNotEmpty;
-    // Tappable whenever the API actually gives us somewhere to go — either
-    // a button's own link, or (when there's no button but the image itself
-    // is marked clickable) that same first-button link as a fallback. If
-    // neither exists, the banner just isn't tappable rather than guessing
-    // a destination that was never specified.
+    // Tappable whenever the API actually gives us somewhere to go. Prefers
+    // the banner's own structured link_type/link_ref (a real category id,
+    // confirmed live 2026-09-22 — see HomeBanner's doc) over a button's
+    // plain link string when both exist, since the structured one points
+    // at something specific and confirmed rather than a generic web path
+    // that may or may not encode the same destination. Falls back to a
+    // button's own link (or, with no button but the image marked
+    // clickable, that same first-button link) for any banner without a
+    // recognized link_type. If neither exists, the banner just isn't
+    // tappable rather than guessing a destination that was never specified.
     final link = banner.buttons.isNotEmpty ? banner.buttons.first.link : null;
-    final onTap = (link != null && link.isNotEmpty) ? () => _openBannerLink(context, link) : null;
+    final VoidCallback? onTap = (banner.linkType == 'category' && banner.linkRef != null)
+        ? () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => ShopScreen(initialFilter: ShopFilter(category: banner.linkTarget, categoryId: banner.linkRef))),
+            )
+        : (link != null && link.isNotEmpty)
+            ? () => _openBannerLink(context, link)
+            : null;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(AppRadius.card),
@@ -457,12 +481,59 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
+/// Shows [PharmacyStore.logoUrl] when the backend eventually sends one;
+/// falls back to the existing gradient+monogram square otherwise (today,
+/// always — see the field's doc comment in pharmacy_store.dart). A failed
+/// image load falls back the same way rather than showing a broken-image
+/// icon, matching ProductImage's pattern elsewhere in the app.
+class _StoreAvatar extends StatelessWidget {
+  final PharmacyStore store;
+  final double size;
+  final double borderRadius;
+  final double fontSize;
+  final List<BoxShadow>? boxShadow;
+  const _StoreAvatar({required this.store, required this.size, required this.borderRadius, required this.fontSize, this.boxShadow});
+
+  @override
+  Widget build(BuildContext context) {
+    final monogramBox = Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: store.gradient, begin: Alignment.topLeft, end: Alignment.bottomRight),
+        borderRadius: BorderRadius.circular(borderRadius),
+        boxShadow: boxShadow,
+      ),
+      alignment: Alignment.center,
+      child: Text(store.monogram, style: TextStyle(color: Colors.white, fontSize: fontSize, fontWeight: FontWeight.w800)),
+    );
+    final logo = store.logoUrl;
+    if (logo == null || logo.isEmpty) return monogramBox;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(borderRadius), boxShadow: boxShadow),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(borderRadius),
+        child: Image.network(
+          logo,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => monogramBox,
+        ),
+      ),
+    );
+  }
+}
+
 class _NearStoreCard extends StatelessWidget {
   final PharmacyStore store;
   const _NearStoreCard({required this.store});
 
   @override
   Widget build(BuildContext context) {
+    final ar = context.watch<LocaleState>().isArabic;
     return GestureDetector(
       onTap: () => Navigator.pushNamed(context, Routes.store, arguments: store),
       child: Container(
@@ -477,16 +548,7 @@ class _NearStoreCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(colors: store.gradient, begin: Alignment.topLeft, end: Alignment.bottomRight),
-                borderRadius: BorderRadius.circular(13),
-              ),
-              alignment: Alignment.center,
-              child: Text(store.monogram, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
-            ),
+            _StoreAvatar(store: store, size: 46, borderRadius: 13, fontSize: 22),
             const SizedBox(height: 7),
             // .nc-nm — no line clamp in the CSS; min-height just keeps cards
             // even for short names, names can wrap to 2-3 lines naturally.
@@ -504,7 +566,7 @@ class _NearStoreCard extends StatelessWidget {
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(
-                    etaLabel(store.eta),
+                    etaLabel(store.eta, ar),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 11.5, color: AppColors.muted),
@@ -524,7 +586,7 @@ class _NearStoreCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
-                  store.offer != null ? 'Offers' : 'Free delivery',
+                  store.offer != null ? (ar ? 'عروض' : 'Offers') : (ar ? 'توصيل مجاني' : 'Free delivery'),
                   style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: store.offer != null ? AppColors.rose : AppColors.ok),
                 ),
               ),
@@ -543,6 +605,7 @@ class _StoreRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ar = context.watch<LocaleState>().isArabic;
     return InkWell(
       onTap: onTap,
       child: Container(
@@ -553,17 +616,7 @@ class _StoreRow extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Container(
-              width: 58,
-              height: 58,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(colors: store.gradient, begin: Alignment.topLeft, end: Alignment.bottomRight),
-                borderRadius: BorderRadius.circular(15),
-                boxShadow: AppColors.shSm,
-              ),
-              alignment: Alignment.center,
-              child: Text(store.monogram, style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800)),
-            ),
+            _StoreAvatar(store: store, size: 58, borderRadius: 15, fontSize: 24, boxShadow: AppColors.shSm),
             const SizedBox(width: 13),
             Expanded(
               child: Column(
@@ -575,8 +628,8 @@ class _StoreRow extends StatelessWidget {
                   // the real store.freeDelivery field.
                   Text(
                     [
-                      etaLabel(store.eta),
-                      if (store.freeDelivery) 'Free delivery',
+                      etaLabel(store.eta, ar),
+                      if (store.freeDelivery) (ar ? 'توصيل مجاني' : 'Free delivery'),
                     ].join(' · '),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -587,7 +640,7 @@ class _StoreRow extends StatelessWidget {
                       margin: const EdgeInsets.only(top: 7),
                       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
                       decoration: BoxDecoration(color: const Color(0xFFD8F64A), borderRadius: BorderRadius.circular(7)),
-                      child: const Text('Offers', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF1A1A1A))),
+                      child: Text(ar ? 'عروض' : 'Offers', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF1A1A1A))),
                     ),
                 ],
               ),
@@ -608,8 +661,8 @@ class _StoreRow extends StatelessWidget {
 /// a separate, genuine backend data-quality issue (~140 hours is not a
 /// plausible delivery ETA) — worth flagging to Soumya, but not something
 /// the app should try to silently "correct" by guessing at intended values.
-String etaLabel(String eta) {
-  if (eta.isEmpty) return 'ETA unavailable';
+String etaLabel(String eta, bool isArabic) {
+  if (eta.isEmpty) return isArabic ? 'الوقت غير متاح' : 'ETA unavailable';
   if (RegExp(r'min', caseSensitive: false).hasMatch(eta)) return eta;
-  return '$eta mins';
+  return isArabic ? '$eta دقيقة' : '$eta mins';
 }

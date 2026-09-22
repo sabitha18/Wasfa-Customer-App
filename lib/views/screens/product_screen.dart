@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
+import '../../core/network/api_exception.dart';
 import '../../core/routing/app_routes.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/formatters.dart';
@@ -9,8 +10,11 @@ import '../../data/models/product.dart';
 import '../../data/models/seller.dart';
 import '../../state/auth_state.dart';
 import '../../state/cart_state.dart';
+import '../../state/locale_state.dart';
 import '../../viewmodels/product_view_model.dart';
 import '../widgets/product_image.dart';
+import '../widgets/html_content.dart';
+import '../widgets/review_sheet.dart';
 import '../widgets/toast.dart';
 
 class ProductScreen extends StatelessWidget {
@@ -38,8 +42,12 @@ class _ProductBody extends StatelessWidget {
     final p = vm.product;
     final sel = vm.selectedSeller;
     final wished = cart.isWishedOrFallback(p.id, p.wishlistStatus);
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
 
-    return Scaffold(
+    return Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: Scaffold(
       appBar: AppBar(
         backgroundColor: AppColors.white,
         elevation: 0,
@@ -59,7 +67,7 @@ class _ProductBody extends StatelessWidget {
         ],
       ),
       body: vm.isLoading
-          ? const LoadingView(message: 'Loading product…')
+          ? LoadingView(message: t('Loading product…', 'جارٍ تحميل المنتج…'))
           : (vm.error != null && p.sellers.isEmpty)
               ? ErrorRetryView(message: vm.error!, onRetry: vm.load)
               : ListView(
@@ -101,7 +109,7 @@ class _ProductBody extends StatelessWidget {
                     const SizedBox(width: 3),
                     Text('${p.rating}', style: const TextStyle(color: AppColors.star, fontWeight: FontWeight.w700, fontSize: 12.5)),
                     Text(
-                      '  ·  ${p.reviews} reviews${p.scientificName.isNotEmpty ? '  ·  ${p.scientificName}' : ''}',
+                      '  ·  ${p.reviews} ${t("reviews", "تقييم")}${p.scientificName.isNotEmpty ? '  ·  ${p.scientificName}' : ''}',
                       style: const TextStyle(color: AppColors.muted, fontSize: 12.5),
                     ),
                   ]),
@@ -124,7 +132,7 @@ class _ProductBody extends StatelessWidget {
                 _AttrGrid(sel: sel),
                 const SizedBox(height: 6),
                 // .h-lbl — 14.5px/700/navy
-                const Text('Key benefits', style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: AppColors.navy)),
+                Text(t('Key benefits', 'الفوائد الرئيسية'), style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: AppColors.navy)),
                 const SizedBox(height: 10),
                 // .benef — gap:7px, margin:4px 0 18px
                 // Prefers the dashboard's real `tags` field (confirmed by the
@@ -157,108 +165,167 @@ class _ProductBody extends StatelessWidget {
                 // which contradicted that rule and let the person override
                 // the pharmacy the app had already decided on.
                 Text(
-                  '🏪 Sold by ${sel.name}',
+                  '🏪 ${t("Sold by", "يُباع بواسطة")} ${sel.name}',
                   style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: AppColors.navy),
                 ),
                 const SizedBox(height: 10),
                 _LockedSeller(seller: sel),
                 const SizedBox(height: 8),
                 // .acc — bordered accordion box with +/- indicator (not a chevron)
-                _AccordionBox(
-                  title: 'Description',
-                  content: '${p.nameEn} — ${p.scientificName}. Genuine MoH-approved product, stored and dispensed per guidelines.',
-                  initiallyOpen: true,
-                ),
-                _AccordionBox(
-                  title: 'How to use',
-                  content: 'Follow your doctor or pharmacist instructions. Do not exceed the recommended dose.',
-                ),
-                _AccordionBox(
-                  title: 'Ingredients',
-                  content: '${p.scientificName}. See pack for full ingredient list.',
-                ),
+                //
+                // Used to be 3 boxes here — Description, How to use,
+                // Ingredients — every one of them entirely fabricated text
+                // (a sentence built from the product's own name/scientific-
+                // name, and two generic boilerplate lines repeated
+                // identically on every single product regardless of what
+                // it actually was). A real PDP response has a genuine
+                // `description` field with real product-specific HTML
+                // content — including "how to use" info baked directly
+                // into that same HTML (e.g. "...</p>How To Use:<p>Use
+                // Twice aday</p>"), not as a separate field at all. So
+                // rather than keep 2 more fabricated boxes alongside the
+                // one real one, "How to use" and "Ingredients" (no real
+                // field backs the latter either) were removed outright —
+                // this single box now shows the actual real content, and
+                // only appears at all when that content is non-empty.
+                if (p.description.trim().isNotEmpty)
+                  _AccordionBox(
+                    title: t('Description', 'الوصف'),
+                    child: HtmlBlocks(html: p.description),
+                    initiallyOpen: true,
+                  ),
                 const SizedBox(height: 8),
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
-                  child: Text('Customer reviews', style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: AppColors.navy)),
+                  child: Text(t('Customer reviews', 'تقييمات العملاء'), style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: AppColors.navy)),
                 ),
                 const SizedBox(height: 10),
-                // .revsum — gap:18px, margin:6px 0 14px
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text('${p.rating}', style: const TextStyle(fontSize: 38, fontWeight: FontWeight.w700, color: AppColors.navy, height: 1)),
-                      Text('${p.reviews} reviews', style: const TextStyle(fontSize: 11, color: AppColors.muted)),
-                    ]),
-                    const SizedBox(width: 18),
-                    Expanded(
-                      child: Column(
-                        children: [5, 4, 3, 2, 1].asMap().entries.map((e) {
-                          final pct = [70, 20, 7, 2, 1][e.key];
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Row(children: [
-                              SizedBox(width: 22, child: Text('${e.value}★', style: const TextStyle(fontSize: 10, color: AppColors.muted))),
-                              const SizedBox(width: 7),
-                              Expanded(
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(4),
-                                  child: LinearProgressIndicator(value: pct / 100, minHeight: 6, backgroundColor: AppColors.cloud, color: AppColors.star),
-                                ),
-                              ),
-                            ]),
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton(
-                    onPressed: () => showToast(context, 'Coming soon'),
-                    style: OutlinedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      side: const BorderSide(color: AppColors.navy, width: 1.5),
-                      foregroundColor: AppColors.navy,
-                      padding: const EdgeInsets.symmetric(vertical: 13),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    child: const Text('Write a review', style: TextStyle(fontWeight: FontWeight.w700)),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                const Text('Have a question?', style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: AppColors.navy)),
-                const SizedBox(height: 10),
-                // .qabox — bg:var(--bg), radius:13, padding:16, text-align:center
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(13)),
-                  child: Column(
+                // .revsum — average rating + count are real fields
+                // (`rating`/`reviews`, confirmed live on every product).
+                // The 5-star breakdown bars used to show hardcoded
+                // percentages (70/20/7/2/1) on EVERY product regardless of
+                // its real rating — fake data with nothing behind it,
+                // removed for that reason. Restored here with the same
+                // visual design, but now computed for real from this
+                // product's own `reviewList` (each real review's actual
+                // star rating) — a product with zero reviews now correctly
+                // shows every bar empty, rather than the old fake
+                // distribution appearing regardless of review count.
+                Builder(builder: (context) {
+                  final counts = List.filled(6, 0); // index 1..5 used
+                  for (final r in p.reviewList) {
+                    if (r.rating >= 1 && r.rating <= 5) counts[r.rating]++;
+                  }
+                  // reviewList is what's actually available to count from;
+                  // p.reviews is the server's own official total and may
+                  // exceed it if reviews are ever paginated server-side —
+                  // the bars reflect what's genuinely counted here, not a
+                  // number reconstructed to match a total we can't see.
+                  final counted = p.reviewList.length;
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      const Text('Have a question about this product?', textAlign: TextAlign.center, style: TextStyle(color: AppColors.ink, fontSize: 13.5)),
-                      const SizedBox(height: 12),
-                      // .btn-ghost — bg:var(--bg)... but sits inside a --bg box, so give
-                      // it white so it's visually distinct, matching the on-screen look.
-                      SizedBox(
-                        width: double.infinity,
-                        child: TextButton(
-                          onPressed: () => showToast(context, 'Coming soon'),
-                          style: TextButton.styleFrom(
-                            backgroundColor: Colors.transparent,
-                            foregroundColor: AppColors.navy,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(11)),
-                          ),
-                          child: const Text('Ask a question', style: TextStyle(fontWeight: FontWeight.w700)),
+                      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('${p.rating}', style: const TextStyle(fontSize: 38, fontWeight: FontWeight.w700, color: AppColors.navy, height: 1)),
+                        Text('${p.reviews} ${t("reviews", "تقييم")}', style: const TextStyle(fontSize: 11, color: AppColors.muted)),
+                      ]),
+                      const SizedBox(width: 18),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            for (var star = 5; star >= 1; star--)
+                              Padding(
+                                padding: EdgeInsets.only(bottom: star > 1 ? 5 : 0),
+                                child: Row(children: [
+                                  Text('$star★', style: const TextStyle(fontSize: 11, color: AppColors.muted)),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(3),
+                                      child: LinearProgressIndicator(
+                                        value: counted > 0 ? counts[star] / counted : 0,
+                                        backgroundColor: AppColors.cloud,
+                                        color: AppColors.star,
+                                        minHeight: 6,
+                                      ),
+                                    ),
+                                  ),
+                                ]),
+                              ),
+                          ],
                         ),
                       ),
                     ],
+                  );
+                }),
+                // Real individual reviews — confirmed live on the PDP
+                // (2026-09-17): each product's own `reviews[]` array
+                // (reviewer name, their rating, their comment, date).
+                // Never shown anywhere before this; the section above used
+                // to be the only review-related content, just a bare
+                // number with nothing under it.
+                if (p.reviewList.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  for (final r in p.reviewList)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(12)),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                            Text(r.name.isNotEmpty ? r.name : t('Anonymous', 'مجهول'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5, color: AppColors.navy)),
+                            if (r.date != null) Text(Formatters.dateShort(r.date!), style: const TextStyle(fontSize: 10.5, color: AppColors.muted)),
+                          ]),
+                          const SizedBox(height: 3),
+                          Row(children: List.generate(5, (i) => Icon(Icons.star_rounded, size: 14, color: i < r.rating ? AppColors.star : AppColors.cloud))),
+                          if (r.comment.trim().isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Text(r.comment, style: const TextStyle(fontSize: 12.5, color: AppColors.ink, height: 1.4)),
+                          ],
+                        ],
+                      ),
+                    ),
+                ],
+                const SizedBox(height: 14),
+                // Confirmed live (2026-09-17): `can_review`/`already_reviewed`
+                // — the button used to show for literally any signed-in
+                // person regardless of whether they'd ever ordered this
+                // product, with zero eligibility check anywhere. Hidden
+                // outright when ineligible, rather than shown-then-blocked
+                // on tap, since there's nothing actionable for the person to
+                // do about it right now (no "buy this to unlock reviewing"
+                // flow) — a disabled/explained button would just be a dead
+                // end. Already-reviewed gets its own distinct, non-actionable
+                // note instead of vanishing silently, since that's a
+                // different, worth-knowing reason than "not eligible at all".
+                if (p.alreadyReviewed)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(12)),
+                    child: Text(
+                      t('You\'ve already reviewed this product', 'لقد قمت بتقييم هذا المنتج بالفعل'),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: AppColors.muted, fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                  )
+                else if (p.canReview)
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: () => openReviewSheet(context, sku: p.sku, productName: p.name(ar)),
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        side: const BorderSide(color: AppColors.navy, width: 1.5),
+                        foregroundColor: AppColors.navy,
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: Text(t('Write a review', 'اكتب تقييماً'), style: const TextStyle(fontWeight: FontWeight.w700)),
+                    ),
                   ),
-                ),
               ],
             ),
           ),
@@ -287,17 +354,18 @@ class _ProductBody extends StatelessWidget {
                     cart.addToCartRemote(context, p, seller: sel.name, price: sel.price, was: sel.was, apiProductId: sel.productId, inStock: sel.stock);
                     showToast(
                       context,
-                      'Added to cart',
-                      actionLabel: 'View',
+                      t('Added to cart', 'أُضيف للسلة'),
+                      actionLabel: t('View', 'عرض'),
                       onAction: () => Navigator.pushNamed(context, Routes.cart),
                     );
                   },
             child: Text(
-              sel.stock ? 'Add to cart · ${Formatters.money(sel.price)}' : 'Out of stock',
+              sel.stock ? '${t("Add to cart", "أضف للسلة")} · ${Formatters.money(sel.price)}' : t('Out of stock', 'غير متوفر'),
               style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
             ),
           ),
         ),
+      ),
       ),
     );
   }
@@ -469,11 +537,12 @@ class _AttrGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ar = context.watch<LocaleState>().isArabic;
     final items = [
-      (Icons.check_circle_rounded, 'Genuine product'),
-      (Icons.verified_rounded, 'MoH approved'),
-      (Icons.location_on_rounded, sel.stock ? 'In stock' : 'Out of stock'),
-      (Icons.local_shipping_rounded, 'Fast delivery'),
+      (Icons.check_circle_rounded, ar ? 'منتج أصلي' : 'Genuine product'),
+      (Icons.verified_rounded, ar ? 'معتمد من وزارة الصحة' : 'MoH approved'),
+      (Icons.location_on_rounded, sel.stock ? (ar ? 'متوفر' : 'In stock') : (ar ? 'غير متوفر' : 'Out of stock')),
+      (Icons.local_shipping_rounded, ar ? 'توصيل سريع' : 'Fast delivery'),
     ];
     return GridView.count(
       crossAxisCount: 2,
@@ -527,6 +596,7 @@ class _LockedSeller extends StatelessWidget {
   const _LockedSeller({required this.seller});
   @override
   Widget build(BuildContext context) {
+    final ar = context.watch<LocaleState>().isArabic;
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -542,7 +612,7 @@ class _LockedSeller extends StatelessWidget {
               children: [
                 Text(seller.name, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: AppColors.ink)),
                 const SizedBox(height: 3),
-                Text('🚚 ${seller.eta}   ${seller.stock ? "🟢 In stock" : "⚪ Out of stock"}', style: const TextStyle(fontSize: 11, color: AppColors.muted)),
+                Text('🚚 ${seller.eta}   ${seller.stock ? (ar ? "🟢 متوفر" : "🟢 In stock") : (ar ? "⚪ غير متوفر" : "⚪ Out of stock")}', style: const TextStyle(fontSize: 11, color: AppColors.muted)),
               ],
             ),
           ),
@@ -557,9 +627,10 @@ class _LockedSeller extends StatelessWidget {
 /// "+"/"−" text indicator (never a chevron), content padded 0/14/14.
 class _AccordionBox extends StatefulWidget {
   final String title;
-  final String content;
+  final String? content;
+  final Widget? child;
   final bool initiallyOpen;
-  const _AccordionBox({required this.title, required this.content, this.initiallyOpen = false});
+  const _AccordionBox({required this.title, this.content, this.child, this.initiallyOpen = false}) : assert(content != null || child != null);
 
   @override
   State<_AccordionBox> createState() => _AccordionBoxState();
@@ -598,7 +669,7 @@ class _AccordionBoxState extends State<_AccordionBox> {
           if (_open)
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-              child: Text(widget.content, style: const TextStyle(color: AppColors.muted, fontSize: 13, height: 1.6)),
+              child: widget.child ?? Text(widget.content!, style: const TextStyle(color: AppColors.muted, fontSize: 13, height: 1.6)),
             ),
         ],
       ),

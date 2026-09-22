@@ -8,6 +8,7 @@ import '../../data/models/prescription.dart';
 import '../../data/repositories/catalog_repository.dart';
 import '../../data/services/account_service.dart';
 import '../../state/auth_state.dart';
+import '../../state/locale_state.dart';
 import '../widgets/page_header.dart';
 import '../widgets/toast.dart';
 import 'rx_detail_screen.dart';
@@ -50,17 +51,21 @@ class _MyRxScreenState extends State<MyRxScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthState>();
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
     if (!auth.isSignedIn) {
-      return Scaffold(
+      return Directionality(
+        textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+        child: Scaffold(
         backgroundColor: AppColors.bg,
-        appBar: PageHeader(title: 'My Rx'),
+        appBar: PageHeader(title: t('My Rx', 'وصفاتي الطبية')),
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               const Text('💊', style: TextStyle(fontSize: 34)),
               const SizedBox(height: 10),
-              const Text('Sign in to see your prescriptions', style: TextStyle(color: AppColors.muted)),
+              Text(t('Sign in to see your prescriptions', 'سجّل الدخول لعرض وصفاتك الطبية'), style: const TextStyle(color: AppColors.muted)),
               const SizedBox(height: 14),
               ElevatedButton(
                 onPressed: () async {
@@ -68,10 +73,11 @@ class _MyRxScreenState extends State<MyRxScreen> {
                   if (ok == true) _load();
                 },
                 style: ElevatedButton.styleFrom(backgroundColor: AppColors.navy, foregroundColor: Colors.white),
-                child: const Text('Sign in'),
+                child: Text(t('Sign in', 'تسجيل الدخول')),
               ),
             ]),
           ),
+        ),
         ),
       );
     }
@@ -81,11 +87,13 @@ class _MyRxScreenState extends State<MyRxScreen> {
         ? all
         : all.where((r) => (r.doctor + r.diagnosis + r.id + r.clinic).toLowerCase().contains(_query.toLowerCase())).toList();
 
-    return Scaffold(
+    return Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: PageHeader(title: 'My Rx'),
+      appBar: PageHeader(title: t('My Rx', 'وصفاتي الطبية')),
       body: (_loading && all.isEmpty)
-          ? const LoadingView(message: 'Loading your prescriptions…')
+          ? LoadingView(message: t('Loading your prescriptions…', 'جارٍ تحميل وصفاتك الطبية…'))
           : (_error != null && all.isEmpty)
               ? ErrorRetryView(message: _error!, onRetry: _load)
               : Column(
@@ -121,7 +129,7 @@ class _MyRxScreenState extends State<MyRxScreen> {
                       errorBorder: InputBorder.none,
                       focusedErrorBorder: InputBorder.none,
                       contentPadding: EdgeInsets.zero,
-                      hintText: 'Search by doctor or diagnosis',
+                      hintText: t('Search by doctor or diagnosis', 'ابحث بالطبيب أو التشخيص'),
                       hintStyle: const TextStyle(fontSize: 13.5, color: AppColors.muted, height: 1.2),
                     ),
                   ),
@@ -131,7 +139,7 @@ class _MyRxScreenState extends State<MyRxScreen> {
           ),
           Expanded(
             child: list.isEmpty
-                ? const Center(child: Text('No results', style: TextStyle(color: AppColors.muted)))
+                ? Center(child: Text(t('No results', 'لا توجد نتائج'), style: const TextStyle(color: AppColors.muted)))
                 : ListView.separated(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
               itemCount: list.length,
@@ -140,6 +148,7 @@ class _MyRxScreenState extends State<MyRxScreen> {
             ),
           ),
         ],
+      ),
       ),
     );
   }
@@ -166,10 +175,11 @@ class _RxCardState extends State<_RxCard> {
   bool _requesting = false;
 
   Future<void> _requestPrices(BuildContext context, Prescription rx) async {
+    final ar = context.read<LocaleState>().isArabic;
     final auth = context.read<AuthState>();
     if (auth.userId == null) return;
     if (rx.id.isEmpty) {
-      showErrorToast(context, 'This prescription is missing its id — can\'t request pricing yet.');
+      showErrorToast(context, ar ? 'هذه الوصفة تفتقد إلى رقم تعريفي — لا يمكن طلب السعر بعد.' : 'This prescription is missing its id — can\'t request pricing yet.');
       return;
     }
     setState(() => _requesting = true);
@@ -178,7 +188,7 @@ class _RxCardState extends State<_RxCard> {
       final fresh = await AccountService.instance.prescriptionDetail(auth.userId!, rx.id);
       CatalogRepository.instance.upsertPrescription(fresh);
       widget.onUpdated?.call();
-      if (context.mounted) showToast(context, 'Prices requested');
+      if (context.mounted) showToast(context, ar ? 'تم طلب الأسعار' : 'Prices requested');
     } catch (e) {
       if (context.mounted) showErrorToast(context, describeError(e));
     } finally {
@@ -189,6 +199,7 @@ class _RxCardState extends State<_RxCard> {
   @override
   Widget build(BuildContext context) {
     final rx = widget.rx;
+    final ar = context.watch<LocaleState>().isArabic;
     // A prescription can legitimately come back with zero items yet (still
     // being transcribed/reviewed, or the backend just hasn't attached items
     // yet) — `.first` on an empty list throws and was taking down this
@@ -238,7 +249,7 @@ class _RxCardState extends State<_RxCard> {
                     borderRadius: BorderRadius.circular(9),
                   ),
                   child: Text(
-                    rx.statusLabel,
+                    rx.statusLabel(ar),
                     style: TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w700,
@@ -254,7 +265,7 @@ class _RxCardState extends State<_RxCard> {
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(color: AppColors.sky, borderRadius: BorderRadius.circular(9)),
                       child: Text(
-                        _requesting ? 'Requesting…' : 'Request Price',
+                        _requesting ? (ar ? 'جارٍ الطلب…' : 'Requesting…') : (ar ? 'طلب السعر' : 'Request Price'),
                         style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white),
                       ),
                     ),
@@ -278,7 +289,7 @@ class _RxCardState extends State<_RxCard> {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(11)),
-              child: const Text('No items listed yet', style: TextStyle(fontSize: 12, color: AppColors.muted)),
+              child: Text(ar ? 'لا توجد عناصر مدرجة بعد' : 'No items listed yet', style: const TextStyle(fontSize: 12, color: AppColors.muted)),
             )
           else
             Column(children: [
@@ -325,7 +336,7 @@ class _RxCardState extends State<_RxCard> {
                 padding: const EdgeInsets.only(bottom: 2),
                 child: Row(children: [
                   Text(
-                    _expanded ? 'Show less' : '+${rx.items.length - 1} more items',
+                    _expanded ? (ar ? 'عرض أقل' : 'Show less') : (ar ? '+${rx.items.length - 1} عناصر أخرى' : '+${rx.items.length - 1} more items'),
                     style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.sky),
                   ),
                   Icon(_expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 15, color: AppColors.sky),
@@ -344,12 +355,12 @@ class _RxCardState extends State<_RxCard> {
                   border: Border.all(color: AppColors.line, width: 1.5),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Row(
+                child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text('View prescription', style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.w700, fontSize: 12.5)),
-                    SizedBox(width: 5),
-                    Icon(Icons.chevron_right_rounded, size: 16, color: AppColors.navy),
+                    Text(ar ? 'عرض الوصفة' : 'View prescription', style: const TextStyle(color: AppColors.navy, fontWeight: FontWeight.w700, fontSize: 12.5)),
+                    const SizedBox(width: 5),
+                    Icon(ar ? Icons.chevron_left_rounded : Icons.chevron_right_rounded, size: 16, color: AppColors.navy),
                   ],
                 ),
               ),

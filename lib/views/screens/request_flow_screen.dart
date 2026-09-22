@@ -10,6 +10,7 @@ import '../../data/models/order.dart';
 import '../../data/models/product.dart';
 import '../../data/repositories/catalog_repository.dart';
 import '../../state/auth_state.dart';
+import '../../state/locale_state.dart';
 import '../../state/orders_state.dart';
 import '../widgets/page_header.dart';
 import '../widgets/product_image.dart';
@@ -81,13 +82,17 @@ class _RequestFlowScreenState extends State<RequestFlowScreen> {
   }
 
   Future<void> _pickPhoto() async {
+    final ar = context.read<LocaleState>().isArabic;
     final source = await showModalBottomSheet<ImageSource>(
       context: context,
-      builder: (sheetContext) => SafeArea(
+      builder: (sheetContext) => Directionality(
+        textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+        child: SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          ListTile(leading: const Icon(Icons.camera_alt_outlined), title: const Text('Take photo'), onTap: () => Navigator.pop(sheetContext, ImageSource.camera)),
-          ListTile(leading: const Icon(Icons.photo_library_outlined), title: const Text('Choose from gallery'), onTap: () => Navigator.pop(sheetContext, ImageSource.gallery)),
+          ListTile(leading: const Icon(Icons.camera_alt_outlined), title: Text(ar ? 'التقاط صورة' : 'Take photo'), onTap: () => Navigator.pop(sheetContext, ImageSource.camera)),
+          ListTile(leading: const Icon(Icons.photo_library_outlined), title: Text(ar ? 'اختيار من المعرض' : 'Choose from gallery'), onTap: () => Navigator.pop(sheetContext, ImageSource.gallery)),
         ]),
+        ),
       ),
     );
     if (source == null) return;
@@ -95,18 +100,19 @@ class _RequestFlowScreenState extends State<RequestFlowScreen> {
       final picked = await ImagePicker().pickImage(source: source, imageQuality: 85);
       if (picked != null && mounted) setState(() => _photo = picked);
     } catch (e) {
-      if (mounted) showErrorToast(context, "Couldn't access the camera/gallery.");
+      if (mounted) showErrorToast(context, ar ? 'تعذر الوصول إلى الكاميرا/المعرض.' : "Couldn't access the camera/gallery.");
     }
   }
 
   Future<void> _submit() async {
+    final ar = context.read<LocaleState>().isArabic;
     if (_reason == null) {
-      showErrorToast(context, 'Please choose a reason');
+      showErrorToast(context, ar ? 'يرجى اختيار سبب' : 'Please choose a reason');
       return;
     }
     final userId = context.read<AuthState>().userId;
     if (userId == null) {
-      showErrorToast(context, 'Please sign in to submit this request.');
+      showErrorToast(context, ar ? 'يرجى تسجيل الدخول لإرسال هذا الطلب.' : 'Please sign in to submit this request.');
       return;
     }
     final order = context.read<OrdersState>().byId(widget.orderId);
@@ -148,31 +154,45 @@ class _RequestFlowScreenState extends State<RequestFlowScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
     final order = context.read<OrdersState>().byId(widget.orderId);
-    if (order == null) return const Scaffold(body: Center(child: Text('Order not found')));
+    if (order == null) {
+      return Directionality(
+        textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+        child: Scaffold(body: Center(child: Text(t('Order not found', 'لم يتم العثور على الطلب')))),
+      );
+    }
     final remaining = isReturn ? order.remainingForReturn : order.remainingForCancel;
     if (remaining.isEmpty) {
       // Shouldn't normally happen — the button that opens this screen is
       // itself hidden once nothing's left to request — but guards against
       // opening this screen straight to a picker with nothing pickable.
-      return Scaffold(
-        appBar: PageHeader(title: isReturn ? 'Return / Refund' : 'Cancel order'),
+      return Directionality(
+        textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+        child: Scaffold(
+        appBar: PageHeader(title: isReturn ? t('Return / Refund', 'إرجاع / استرداد') : t('Cancel order', 'إلغاء الطلب')),
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
             child: Text(
-              isReturn ? 'Every item in this order already has a return request.' : 'Every item in this order already has a cancellation request.',
+              isReturn
+                  ? t('Every item in this order already has a return request.', 'كل عنصر في هذا الطلب لديه بالفعل طلب إرجاع.')
+                  : t('Every item in this order already has a cancellation request.', 'كل عنصر في هذا الطلب لديه بالفعل طلب إلغاء.'),
               textAlign: TextAlign.center,
               style: const TextStyle(color: AppColors.muted, fontSize: 13.5),
             ),
           ),
         ),
+        ),
       );
     }
 
-    return Scaffold(
+    return Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: PageHeader(title: isReturn ? 'Return / Refund' : 'Cancel order'),
+      appBar: PageHeader(title: isReturn ? t('Return / Refund', 'إرجاع / استرداد') : t('Cancel order', 'إلغاء الطلب')),
       body: PageView(
         controller: _page,
         physics: const NeverScrollableScrollPhysics(),
@@ -184,7 +204,7 @@ class _RequestFlowScreenState extends State<RequestFlowScreen> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                 child: Text(
-                  isReturn ? 'Select the items you want to return' : 'Select the items you want to cancel',
+                  isReturn ? t('Select the items you want to return', 'اختر العناصر التي تريد إرجاعها') : t('Select the items you want to cancel', 'اختر العناصر التي تريد إلغاءها'),
                   style: const TextStyle(color: AppColors.muted, fontSize: 13, fontWeight: FontWeight.w600),
                 ),
               ),
@@ -233,7 +253,7 @@ class _RequestFlowScreenState extends State<RequestFlowScreen> {
                     minimumSize: const Size(double.infinity, 0),
                   ),
                   onPressed: _selectedQty.isEmpty ? null : () => _goTo(1),
-                  child: Text('Continue (${_selectedQty.length})', style: const TextStyle(fontWeight: FontWeight.w700)),
+                  child: Text('${t("Continue", "متابعة")} (${_selectedQty.length})', style: const TextStyle(fontWeight: FontWeight.w700)),
                 ),
               ),
             ],
@@ -245,7 +265,7 @@ class _RequestFlowScreenState extends State<RequestFlowScreen> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                 child: Text(
-                  isReturn ? 'Why are you returning?' : 'Why are you cancelling?',
+                  isReturn ? t('Why are you returning?', 'لماذا تقوم بالإرجاع؟') : t('Why are you cancelling?', 'لماذا تقوم بالإلغاء؟'),
                   style: const TextStyle(color: AppColors.muted, fontSize: 13, fontWeight: FontWeight.w600),
                 ),
               ),
@@ -269,14 +289,14 @@ class _RequestFlowScreenState extends State<RequestFlowScreen> {
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(color: Colors.white, border: Border.all(color: AppColors.line, width: 1), borderRadius: BorderRadius.circular(16), boxShadow: AppColors.shSm),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  const Text('Additional details (optional)', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.navy)),
+                  Text(t('Additional details (optional)', 'تفاصيل إضافية (اختياري)'), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.navy)),
                   const SizedBox(height: 12),
                   TextField(
                     controller: _noteController,
                     minLines: 3,
                     maxLines: 4,
                     decoration: InputDecoration(
-                      hintText: 'Tell us more…',
+                      hintText: t('Tell us more…', 'أخبرنا المزيد…'),
                       contentPadding: const EdgeInsets.all(11),
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.line)),
                       enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.line)),
@@ -292,7 +312,7 @@ class _RequestFlowScreenState extends State<RequestFlowScreen> {
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(color: Colors.white, border: Border.all(color: AppColors.line, width: 1), borderRadius: BorderRadius.circular(16), boxShadow: AppColors.shSm),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    const Text('📷 Attach product photo *', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.navy)),
+                    Text(t('📷 Attach product photo *', '📷 أرفق صورة المنتج *'), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.navy)),
                     const SizedBox(height: 12),
                     if (_photo != null)
                       Stack(children: [
@@ -316,10 +336,10 @@ class _RequestFlowScreenState extends State<RequestFlowScreen> {
                           width: double.infinity,
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(color: AppColors.bg, border: Border.all(color: AppColors.cloud, width: 1.5), borderRadius: BorderRadius.circular(12)),
-                          child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                            Icon(Icons.camera_alt_outlined, size: 18, color: AppColors.sky),
-                            SizedBox(width: 9),
-                            Text('Attach product photo', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: AppColors.sky)),
+                          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                            const Icon(Icons.camera_alt_outlined, size: 18, color: AppColors.sky),
+                            const SizedBox(width: 9),
+                            Text(t('Attach product photo', 'أرفق صورة المنتج'), style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: AppColors.sky)),
                           ]),
                         ),
                       ),
@@ -337,7 +357,7 @@ class _RequestFlowScreenState extends State<RequestFlowScreen> {
                   onPressed: _submitting ? null : _submit,
                   child: _submitting
                       ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white))
-                      : Text(isReturn ? 'Submit return request' : 'Submit cancellation request', style: const TextStyle(fontWeight: FontWeight.w700)),
+                      : Text(isReturn ? t('Submit return request', 'إرسال طلب الإرجاع') : t('Submit cancellation request', 'إرسال طلب الإلغاء'), style: const TextStyle(fontWeight: FontWeight.w700)),
                 ),
               ),
             ],
@@ -357,14 +377,16 @@ class _RequestFlowScreenState extends State<RequestFlowScreen> {
                     child: const Icon(Icons.check_rounded, color: AppColors.ok, size: 44),
                   ),
                   const SizedBox(height: 20),
-                  Text(isReturn ? 'Return requested' : 'Cancellation requested', style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700, color: AppColors.navy)),
+                  Text(isReturn ? t('Return requested', 'تم طلب الإرجاع') : t('Cancellation requested', 'تم طلب الإلغاء'), style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700, color: AppColors.navy)),
                   const SizedBox(height: 8),
                   // .ph-screen p — max-width:240px, so it wraps/centers the
                   // same way as the HTML instead of spanning the full width
                   SizedBox(
                     width: 240,
                     child: Text(
-                      isReturn ? 'Our team will review your return and decide on a return or refund.' : "Your request was sent to our team. We'll review it and update you shortly.",
+                      isReturn
+                          ? t('Our team will review your return and decide on a return or refund.', 'سيقوم فريقنا بمراجعة طلب الإرجاع واتخاذ قرار بشأن الإرجاع أو الاسترداد.')
+                          : t("Your request was sent to our team. We'll review it and update you shortly.", 'تم إرسال طلبك إلى فريقنا. سنراجعه ونوافيك بالمستجدات قريباً.'),
                       textAlign: TextAlign.center,
                       style: const TextStyle(fontSize: 13.5, height: 1.5, color: AppColors.muted),
                     ),
@@ -378,7 +400,7 @@ class _RequestFlowScreenState extends State<RequestFlowScreen> {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
                     ),
                     onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Back to order', style: TextStyle(fontWeight: FontWeight.w700)),
+                    child: Text(t('Back to order', 'العودة إلى الطلب'), style: const TextStyle(fontWeight: FontWeight.w700)),
                   ),
                   const SizedBox(height: 10),
                   // .btn-ghost — the second button that was missing entirely
@@ -396,13 +418,14 @@ class _RequestFlowScreenState extends State<RequestFlowScreen> {
                         ..pop()
                         ..pop();
                     },
-                    child: const Text('My orders', style: TextStyle(fontWeight: FontWeight.w700)),
+                    child: Text(t('My orders', 'طلباتي'), style: const TextStyle(fontWeight: FontWeight.w700)),
                   ),
                 ],
               ),
             ),
           ),
         ],
+      ),
       ),
     );
   }
@@ -433,6 +456,7 @@ class _ReqItemRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ar = context.watch<LocaleState>().isArabic;
     final selected = selectedQty != null;
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 11),
@@ -468,9 +492,12 @@ class _ReqItemRow extends StatelessWidget {
             onTap: onTap,
             behavior: HitTestBehavior.opaque,
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(name.isNotEmpty ? name : (product?.nameEn ?? 'Item'), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.ink)),
+              Text(name.isNotEmpty ? name : (product?.nameEn ?? (ar ? 'عنصر' : 'Item')), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.ink)),
               const SizedBox(height: 2),
-              Text('×$maxQty ordered · ${Formatters.money(price)} each', style: const TextStyle(fontSize: 11.5, color: AppColors.muted)),
+              Text(
+                ar ? '×$maxQty مطلوب · ${Formatters.money(price)} للقطعة' : '×$maxQty ordered · ${Formatters.money(price)} each',
+                style: const TextStyle(fontSize: 11.5, color: AppColors.muted),
+              ),
             ]),
           ),
         ),

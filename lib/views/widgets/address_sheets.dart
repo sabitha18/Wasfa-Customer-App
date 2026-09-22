@@ -8,6 +8,7 @@ import '../../core/widgets/async_state_view.dart';
 import '../../data/models/address.dart';
 import '../../state/address_state.dart';
 import '../../state/auth_state.dart';
+import '../../state/locale_state.dart';
 import '../../state/location_state.dart';
 import 'toast.dart';
 
@@ -20,6 +21,8 @@ import 'toast.dart';
 /// it switches [AddressState.useCurrentLocation] back on instead of picking
 /// one of the saved addresses below.
 void showAddressPickerSheet(BuildContext context, AddressState addressState, LocationState locationState) {
+  final ar = context.read<LocaleState>().isArabic;
+  String t(String en, String arabic) => ar ? arabic : en;
   showModalBottomSheet(
     context: context,
     // Was missing before — without this, showModalBottomSheet caps the
@@ -31,7 +34,9 @@ void showAddressPickerSheet(BuildContext context, AddressState addressState, Loc
     isScrollControlled: true,
     backgroundColor: Colors.white,
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
-    builder: (sheetContext) => SafeArea(
+    builder: (sheetContext) => Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: SafeArea(
       // Caps the sheet at 85% of the screen so the drag-handle area at the
       // very top always stays visible, while letting the body underneath
       // scroll for however many addresses there are.
@@ -45,7 +50,7 @@ void showAddressPickerSheet(BuildContext context, AddressState addressState, Loc
               padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
               decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.line, width: 1))),
               child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text('Delivery addresses', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.navy)),
+                Text(t('Delivery addresses', 'عناوين التوصيل'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.navy)),
                 InkWell(
                   onTap: () => Navigator.pop(sheetContext),
                   borderRadius: BorderRadius.circular(20),
@@ -101,7 +106,7 @@ void showAddressPickerSheet(BuildContext context, AddressState addressState, Loc
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('Current location', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5, color: AppColors.navy)),
+                            Text(t('Current location', 'الموقع الحالي'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5, color: AppColors.navy)),
                             const SizedBox(height: 2),
                             Text(
                               // Once a real match attempt has confirmed this
@@ -113,8 +118,8 @@ void showAddressPickerSheet(BuildContext context, AddressState addressState, Loc
                               // "Current location" selected here while
                               // Checkout quietly used a different address.
                               addressState.useCurrentLocation && addressState.currentLocationMatchFailed
-                                  ? "Doesn't match a delivery area — using your saved address instead"
-                                  : (locationState.formatted?.isNotEmpty == true ? locationState.formatted! : 'Detects your location automatically'),
+                                  ? t("Doesn't match a delivery area — using your saved address instead", 'لا يتطابق مع منطقة توصيل — سيتم استخدام عنوانك المحفوظ بدلاً منه')
+                                  : (locationState.formatted?.isNotEmpty == true ? locationState.formatted! : t('Detects your location automatically', 'يكتشف موقعك تلقائياً')),
                               style: TextStyle(
                                 fontSize: 11,
                                 color: (addressState.useCurrentLocation && addressState.currentLocationMatchFailed) ? AppColors.rose : AppColors.muted,
@@ -167,7 +172,7 @@ void showAddressPickerSheet(BuildContext context, AddressState addressState, Loc
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                     decoration: BoxDecoration(color: const Color(0xFFF2FAFE), borderRadius: BorderRadius.circular(6)),
-                                    child: const Text('Default', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700, color: AppColors.sky)),
+                                    child: Text(t('Default', 'افتراضي'), style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700, color: AppColors.sky)),
                                   ),
                                 ],
                               ]),
@@ -217,10 +222,10 @@ void showAddressPickerSheet(BuildContext context, AddressState addressState, Loc
                     // from now.
                     showAddressFormSheet(context, addressState, -1);
                   },
-                  child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Icon(Icons.add, size: 16, color: AppColors.navy),
-                    SizedBox(width: 6),
-                    Text('Add new address', style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 13.5)),
+                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    const Icon(Icons.add, size: 16, color: AppColors.navy),
+                    const SizedBox(width: 6),
+                    Text(t('Add new address', 'إضافة عنوان جديد'), style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 13.5)),
                   ]),
                 ),
               ),
@@ -229,6 +234,7 @@ void showAddressPickerSheet(BuildContext context, AddressState addressState, Loc
             ),
           ],
         ),
+      ),
       ),
     ),
   );
@@ -382,8 +388,9 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
   }
 
   Future<void> _save() async {
+    final ar = context.read<LocaleState>().isArabic;
     if (_govId == null || _areaId == null) {
-      showErrorToast(context, 'Please choose your governorate and area.');
+      showErrorToast(context, ar ? 'يرجى اختيار المحافظة والمنطقة.' : 'Please choose your governorate and area.');
       return;
     }
     if (!await requireLogin(context)) return;
@@ -414,7 +421,7 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
       await widget.addressState.saveRemote(auth.userId!, address, index: _isEdit ? widget.index : null);
       if (!mounted) return;
       Navigator.pop(context, true);
-      showToast(context, 'Address saved');
+      showToast(context, ar ? 'تم حفظ العنوان' : 'Address saved');
     } catch (e) {
       if (!mounted) return;
       showErrorToast(context, describeError(e));
@@ -425,13 +432,18 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
+    const titlesAr = {'Home/Apartment': 'المنزل/الشقة', 'Work': 'عمل', 'Other': 'أخرى'};
     final media = MediaQuery.of(context);
     // Available height once the keyboard is up — this is what was missing:
     // the old code capped the field list at 60% of the *full* screen height,
     // which doesn't shrink when the keyboard eats another 40-50% of it, so
     // header + a still-60%-tall body + footer no longer fit and overflowed.
     final maxSheetHeight = media.size.height - media.viewInsets.bottom - media.padding.top - 24;
-    return Padding(
+    return Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: Padding(
       padding: EdgeInsets.only(bottom: media.viewInsets.bottom),
       child: SafeArea(
         child: ConstrainedBox(
@@ -444,7 +456,7 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
                 padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
                 decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.line, width: 1))),
                 child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                  Text(_isEdit ? 'Edit address' : 'Add new address', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.navy)),
+                  Text(_isEdit ? t('Edit address', 'تعديل العنوان') : t('Add new address', 'إضافة عنوان جديد'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.navy)),
                   InkWell(onTap: () => Navigator.pop(context), child: const Icon(Icons.close_rounded, size: 20, color: AppColors.muted)),
                 ]),
               ),
@@ -457,49 +469,49 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
                 padding: const EdgeInsets.fromLTRB(18, 6, 18, 12),
                 child: Column(children: [
                   _AField(
-                    label: 'Title',
+                    label: t('Title', 'نوع العنوان'),
                     required: true,
-                    child: _ADropdown(value: _title, options: titles, onChanged: (v) => setState(() => _title = v)),
+                    child: _ADropdown(value: _title, options: titles, labelFor: (v) => t(v, titlesAr[v] ?? v), onChanged: (v) => setState(() => _title = v)),
                   ),
                   _ARow(children: [
-                    _AField(label: 'First name', required: true, child: _AInput(controller: _first)),
-                    _AField(label: 'Last name', required: true, child: _AInput(controller: _last)),
+                    _AField(label: t('First name', 'الاسم الأول'), required: true, child: _AInput(controller: _first)),
+                    _AField(label: t('Last name', 'اسم العائلة'), required: true, child: _AInput(controller: _last)),
                   ]),
-                  _AField(label: 'Email', required: true, child: _AInput(controller: _email, keyboard: TextInputType.emailAddress)),
+                  _AField(label: t('Email', 'البريد الإلكتروني'), required: true, child: _AInput(controller: _email, keyboard: TextInputType.emailAddress)),
                   _ARow(children: [
                     SizedBox(
                       width: 64,
-                      child: _AField(label: 'Phone', required: true, child: _AInput(controller: TextEditingController(text: '+965'), readOnly: true)),
+                      child: _AField(label: t('Phone', 'رقم الهاتف'), required: true, child: _AInput(controller: TextEditingController(text: '+965'), readOnly: true)),
                     ),
                     Expanded(
-                      child: _AField(label: '\u00A0', required: false, child: _AInput(controller: _phone, hint: 'Enter phone number', keyboard: TextInputType.phone)),
+                      child: _AField(label: '\u00A0', required: false, child: _AInput(controller: _phone, hint: t('Enter phone number', 'أدخل رقم الهاتف'), keyboard: TextInputType.phone)),
                     ),
                   ]),
                   _ARow(children: [
                     SizedBox(
                       width: 64,
-                      child: _AField(label: 'Alt. phone', required: false, child: _AInput(controller: TextEditingController(text: '+965'), readOnly: true)),
+                      child: _AField(label: t('Alt. phone', 'هاتف بديل'), required: false, child: _AInput(controller: TextEditingController(text: '+965'), readOnly: true)),
                     ),
                     Expanded(
                       child: _AField(label: '\u00A0', required: false, child: _AInput(controller: _alt, keyboard: TextInputType.phone)),
                     ),
                   ]),
                   _AField(
-                    label: 'Governorate',
+                    label: t('Governorate', 'المحافظة'),
                     required: true,
                     child: _AreaIdDropdown(
                       value: _govId,
-                      hint: 'Select governorate',
+                      hint: t('Select governorate', 'اختر المحافظة'),
                       options: [for (final g in widget.addressState.areaCatalog.governorates) (id: g.id, label: g.name)],
                       onChanged: (v) => setState(() { _govId = v; _areaId = null; }),
                     ),
                   ),
                   _AField(
-                    label: 'Area',
+                    label: t('Area', 'المنطقة'),
                     required: true,
                     child: _AreaIdDropdown(
                       value: _areaId,
-                      hint: 'Select area',
+                      hint: t('Select area', 'اختر المنطقة'),
                       options: [
                         for (final g in widget.addressState.areaCatalog.governorates)
                           if (g.id == _govId)
@@ -509,15 +521,15 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
                     ),
                   ),
                   _ARow(children: [
-                    _AField(label: 'Block', required: true, child: _AInput(controller: _block)),
-                    _AField(label: 'Street name', required: true, child: _AInput(controller: _street)),
+                    _AField(label: t('Block', 'القطعة'), required: true, child: _AInput(controller: _block)),
+                    _AField(label: t('Street name', 'اسم الشارع'), required: true, child: _AInput(controller: _street)),
                   ]),
                   _ARow(children: [
-                    _AField(label: 'Building', required: true, child: _AInput(controller: _building)),
-                    _AField(label: 'Apartment', required: false, child: _AInput(controller: _apt)),
+                    _AField(label: t('Building', 'المبنى'), required: true, child: _AInput(controller: _building)),
+                    _AField(label: t('Apartment', 'الشقة'), required: false, child: _AInput(controller: _apt)),
                   ]),
-                  _AField(label: 'Floor', required: false, child: _AInput(controller: _floor)),
-                  _AField(label: 'Delivery note (optional)', required: false, child: _AInput(controller: _note, hint: 'e.g. gate code, landmark…')),
+                  _AField(label: t('Floor', 'الطابق'), required: false, child: _AInput(controller: _floor)),
+                  _AField(label: t('Delivery note (optional)', 'ملاحظة التوصيل (اختياري)'), required: false, child: _AInput(controller: _note, hint: t('e.g. gate code, landmark…', 'مثال: رمز البوابة، معلم قريب…'))),
                   InkWell(
                     onTap: () => setState(() => _isDefault = !_isDefault),
                     borderRadius: BorderRadius.circular(8),
@@ -535,7 +547,7 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
                           child: _isDefault ? const Icon(Icons.check_rounded, size: 13, color: Colors.white) : null,
                         ),
                         const SizedBox(width: 10),
-                        const Text('Set as default address', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: AppColors.navy)),
+                        Text(t('Set as default address', 'تعيين كعنوان افتراضي'), style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: AppColors.navy)),
                       ]),
                     ),
                   ),
@@ -559,13 +571,14 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
                   onPressed: _saving ? null : _save,
                   child: _saving
                       ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white))
-                      : Text(_isEdit ? 'Save address' : 'Add address', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                      : Text(_isEdit ? t('Save address', 'حفظ العنوان') : t('Add address', 'إضافة العنوان'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
                 ),
               ),
             ),
           ],
           ),
         ),
+      ),
       ),
     );
   }
@@ -670,13 +683,21 @@ class _ADropdown extends StatelessWidget {
   final String? hint;
   final List<String> options;
   final ValueChanged<String> onChanged;
-  const _ADropdown({required this.value, this.hint, required this.options, required this.onChanged});
+  // Display text only — the stored/sent value is always the raw option
+  // string itself (e.g. "Work"), regardless of locale, since that's what
+  // saveRemote sends as Address.title and what a saved address is matched
+  // against later. Keeping the two separate means switching the language
+  // toggle never changes what's actually saved for an existing or new
+  // address — only how the same fixed set of choices is displayed.
+  final String Function(String)? labelFor;
+  const _ADropdown({required this.value, this.hint, required this.options, required this.onChanged, this.labelFor});
   @override
   Widget build(BuildContext context) {
+    String label(String v) => labelFor?.call(v) ?? v;
     return DropdownButtonFormField<String>(
       value: value != null && options.contains(value) ? value : null,
       hint: hint != null ? Text(hint!, style: const TextStyle(color: AppColors.muted, fontSize: 13.5)) : null,
-      items: options.map((o) => DropdownMenuItem(value: o, child: Text(o, style: const TextStyle(fontSize: 13.5, color: AppColors.ink)))).toList(),
+      items: options.map((o) => DropdownMenuItem(value: o, child: Text(label(o), style: const TextStyle(fontSize: 13.5, color: AppColors.ink)))).toList(),
       onChanged: (v) { if (v != null) onChanged(v); },
       decoration: InputDecoration(
         isDense: true,

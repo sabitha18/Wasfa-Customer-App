@@ -26,6 +26,7 @@ dependencies:
   flutter_local_notifications: ^18.0.1
   url_launcher: ^6.3.2
   go_sell_sdk_flutter: ^2.4.11
+  flutter_svg: ^2.3.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -33,3 +34,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/images/wasfa_logo.png

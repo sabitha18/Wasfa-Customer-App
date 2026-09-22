@@ -17,6 +17,14 @@ class PharmacyStore {
   final String? offer; // non-null = "has an offer" (UI just checks null vs not, never reads the text)
   final String seller; // maps to Seller.name used across PRODUCTS
   final int? productCount; // `products` count from GET /app/stores, if the card ever wants to show it
+  /// Not part of the confirmed live `/app/stores` shape yet — every known
+  /// response only has {id, name, name_ar, area, category, products, eta,
+  /// free, pro, offers, seller}, no image field at all. Parsed
+  /// speculatively against a few likely key names so store cards pick it
+  /// up the moment backend adds one, with zero code changes needed here.
+  /// Null today for every real store — see _StoreAvatar in home_screen.dart
+  /// for the gradient+monogram fallback every store currently shows.
+  final String? logoUrl;
   final List<Color> gradient;
   final String monogram;
 
@@ -33,6 +41,7 @@ class PharmacyStore {
     this.offer,
     required this.seller,
     this.productCount,
+    this.logoUrl,
     required this.gradient,
     required this.monogram,
   });
@@ -79,6 +88,7 @@ class PharmacyStore {
       offer: asBool(json, const ['offers', 'has_offers']) ? 'offers' : asStringOrNull(json, const ['offer', 'offer_label']),
       seller: asString(json, const ['seller', 'seller_name', 'name']),
       productCount: asIntOrNull(json, const ['products', 'product_count']),
+      logoUrl: asStringOrNull(json, const ['logo', 'logo_url', 'image', 'image_url', 'store_logo', 'avatar']),
       gradient: _gradientFor(name),
       monogram: monogram.isNotEmpty ? monogram : (name.isNotEmpty ? name[0].toUpperCase() : '℞'),
     );

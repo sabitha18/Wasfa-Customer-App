@@ -198,10 +198,10 @@ class Prescription {
   /// label's own text. This used to double as the action button's text
   /// when tappable, which doesn't match how the reference actually works —
   /// the pill is never itself the button.
-  String get statusLabel {
-    if (isPriced) return 'Price Submitted';
-    if (isInReview) return 'Pharmacist Review';
-    return 'Pending';
+  String statusLabel(bool isArabic) {
+    if (isPriced) return isArabic ? 'تم تحديد السعر' : 'Price Submitted';
+    if (isInReview) return isArabic ? 'مراجعة الصيدلي' : 'Pharmacist Review';
+    return isArabic ? 'قيد الانتظار' : 'Pending';
   }
 
   /// Joins doctor + specialty — matches the existing native app's exact

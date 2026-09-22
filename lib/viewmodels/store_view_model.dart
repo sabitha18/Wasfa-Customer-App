@@ -3,6 +3,7 @@ import '../core/network/api_exception.dart';
 import '../data/models/home_feed.dart';
 import '../data/models/pharmacy_store.dart';
 import '../data/models/product.dart';
+import '../data/models/seller_banner.dart';
 import '../data/repositories/catalog_repository.dart';
 import '../data/services/catalog_service.dart';
 
@@ -16,11 +17,21 @@ class StoreViewModel extends ChangeNotifier {
   String? error;
   List<Product>? _fetched;
 
+  /// Real per-store promo carousel content (see SellerBanner's doc) —
+  /// replaces the 3 hardcoded PromoCards that used to show identically on
+  /// every seller's page. Empty (not a fallback to those old cards) until
+  /// this loads or if the store has no banners configured — store_screen.dart
+  /// simply shows nothing in that case rather than reverting to fake ones.
+  List<SellerBanner> banners = [];
+
   StoreViewModel(this.store, {this.userId}) {
     // When the store carries a backend id, load its catalogue from the server
     // (`GET /app/products?shop=<id>`). Mock/local stores (no id) fall back to
     // the seller-name match against the shared product cache.
-    if (store.id != null) _load();
+    if (store.id != null) {
+      _load();
+      _loadBanners();
+    }
     // Safety net so "Shop by category" still works when a store is opened
     // via a deep link, before Home/Shop has ever cached the real tree.
     if (_repo.liveProductCategories.isEmpty) _loadCategories();
@@ -42,6 +53,16 @@ class StoreViewModel extends ChangeNotifier {
     }
   }
 
+  Future<void> _loadBanners() async {
+    try {
+      banners = await _service.sellerBanners(store.id!);
+      notifyListeners();
+    } catch (_) {
+      // Best-effort — the carousel just shows nothing rather than a fake
+      // placeholder if this fails.
+    }
+  }
+
   Future<void> _loadCategories() async {
     try {
       final tree = await _service.categories();
@@ -59,7 +80,19 @@ class StoreViewModel extends ChangeNotifier {
   List<Product> get offers =>
       products.where((p) => p.isOffer || p.sellers.any((s) => s.name == store.seller && s.was != null)).toList();
 
-  List<Product> get bestSellers => products.where((p) => p.isBestSeller).toList();
+  /// Confirmed live (2026-09-17): real per-product `sold`/`total_sold`
+  /// counts, sorted descending — this is genuinely what `sort=best` orders
+  /// by server-side (a real page came back in strict descending
+  /// `total_sold` order). Was `products.where((p) => p.isBestSeller)`,
+  /// which could never show anything at all — see that getter's doc.
+  /// Filters out anything with no real sold count (0 or unknown) rather
+  /// than showing arbitrarily-ordered zero-sales products as if they were
+  /// best sellers.
+  List<Product> get bestSellers {
+    final withSales = products.where((p) => (p.sold ?? 0) > 0).toList();
+    withSales.sort((a, b) => (b.sold ?? 0).compareTo(a.sold ?? 0));
+    return withSales;
+  }
 
   /// Categories actually present in this store's catalogue. Prefers the real
   /// backend taxonomy ([CatalogRepository.liveProductCategories], populated
@@ -126,5 +159,29 @@ class StoreViewModel extends ChangeNotifier {
     return map[name] ?? '🗂️';
   }
 
-  List<String> get brandsInStore => products.map((p) => p.brand).toSet().toList();
+  // Empty-string brands (a product with no brand set at all) were sneaking
+  // into this list as an actual entry — a real store had one, showing up
+  // as a completely blank pill with no text in "Top brands" (screenshot,
+  // 2026-09-16). Filtered out here rather than leaving it to whatever
+  // widget renders the chip to silently do nothing useful with an empty
+  // label.
+  List<String> get brandsInStore => products.map((p) => p.brand).where((b) => b.trim().isNotEmpty).toSet().toList();
+
+  /// Brand name -> logo URL, for whichever brands in [brandsInStore]
+  /// actually have one (see Product.brandLogo's doc — speculative, always
+  /// null today). A brand can appear on several products; the first
+  /// non-null logo found for that name wins. store_screen.dart's "Top
+  /// brands" row falls back to today's plain text-only pill for any brand
+  /// missing an entry here, which right now is every brand.
+  Map<String, String> get brandLogosInStore {
+    final map = <String, String>{};
+    for (final p in products) {
+      final name = p.brand.trim();
+      final logo = p.brandLogo;
+      if (name.isNotEmpty && logo != null && logo.isNotEmpty && !map.containsKey(name)) {
+        map[name] = logo;
+      }
+    }
+    return map;
+  }
 }

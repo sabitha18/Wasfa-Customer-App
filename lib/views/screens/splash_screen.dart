@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/notifications/notification_service.dart';
 import '../../core/routing/app_routes.dart';
 import '../../core/theme/app_colors.dart';
 import '../../state/auth_state.dart';
+import '../../state/locale_state.dart';
 import '../../state/location_state.dart';
 import 'location_gate_screen.dart';
 
@@ -31,8 +33,23 @@ class _SplashScreenState extends State<SplashScreen> {
     // meaning that first round always went out with no user_id at all,
     // then something re-fetched a moment later once auth caught up. Every
     // app launch was doing each of those requests twice for no reason.
-    await Future.wait([location.initialize(), context.read<AuthState>().restore()]);
+    await Future.wait([
+      location.initialize(),
+      context.read<AuthState>().restore(),
+      // Loads whatever language was saved last session — without this,
+      // the app always started back at English regardless of what was
+      // picked before, since LocaleState itself was never persisted.
+      context.read<LocaleState>().restore(),
+    ]);
     if (!mounted) return;
+
+    // Started here — not in main() — and deliberately not awaited. See
+    // the comment in main.dart for why: by this point location's own
+    // permission request (if it made one) has already fully resolved, so
+    // there's nothing left in flight for this to collide with. Not
+    // awaiting keeps push setup from delaying navigation — it finishes in
+    // the background regardless of which screen the person lands on next.
+    NotificationService.instance.initialize();
 
     if (location.status == LocationStatus.granted) {
       Navigator.of(context).pushReplacementNamed(Routes.root);
@@ -56,10 +73,9 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 }
 
-/// Code-drawn wordmark placeholder — swap for the real logo asset whenever
-/// one is available: drop it at e.g. `assets/logo.png`, declare it under
-/// `flutter: assets:` in pubspec.yaml, and replace this widget's body with
-/// `Image.asset('assets/logo.png', width: 96)`.
+/// Real logo (`assets/images/wasfa_logo.png`, declared under `flutter:
+/// assets:` in pubspec.yaml) — replaces the earlier code-drawn "℞" +
+/// "WASFA" text placeholder this comment used to describe swapping out.
 class _WasfaMark extends StatelessWidget {
   const _WasfaMark();
 
@@ -68,19 +84,7 @@ class _WasfaMark extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          width: 84,
-          height: 84,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [AppColors.navy, AppColors.sky], begin: Alignment.topLeft, end: Alignment.bottomRight),
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: AppColors.sh,
-          ),
-          alignment: Alignment.center,
-          child: const Text('℞', style: TextStyle(color: Colors.white, fontSize: 40, fontWeight: FontWeight.w800)),
-        ),
-        const SizedBox(height: 16),
-        const Text('WASFA', style: TextStyle(color: AppColors.navy, fontSize: 22, fontWeight: FontWeight.w800, letterSpacing: 1.5)),
+        Image.asset('assets/images/wasfa_logo.png', width: 180),
         const SizedBox(height: 24),
         const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: AppColors.sky)),
       ],

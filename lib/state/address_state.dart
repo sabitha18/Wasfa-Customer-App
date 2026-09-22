@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import '../core/network/api_exception.dart';
 import '../data/models/address.dart';
 import '../data/models/area_catalog.dart';
+import '../data/models/delivery_charge.dart';
 import '../data/services/account_service.dart';
 import '../data/services/catalog_service.dart';
 
@@ -70,10 +71,58 @@ class AddressState extends ChangeNotifier {
   /// while a different saved address is silently used underneath.
   bool get isCurrentLocationActive => useCurrentLocation && !(currentLocationAddress == null && currentLocationMatchFailed);
 
+  /// The REAL, server-computed delivery charge for whatever [effectiveAddress]
+  /// currently resolves to — see `GET /app/delivery-charge(/address/{id})`'s
+  /// doc (ApiConfig). Kept here, on AddressState, rather than recomputed
+  /// from checkout-init's own bundled `summary.delivery_fee`, because
+  /// checkoutInit only ever takes `user_id` (no address override) and
+  /// always reflects the account's own DEFAULT address — not necessarily
+  /// whichever one is actually selected client-side. This is the one
+  /// source Cart/Checkout should ever read a delivery fee from; neither
+  /// screen computes one itself. Null until [refreshDeliveryCharge] has
+  /// actually resolved something — callers should show a loading state for
+  /// null, never a guessed number.
+  DeliveryCharge? currentDeliveryCharge;
+  bool deliveryChargeLoading = false;
+  String? deliveryChargeError;
+
+  /// Re-fetches [currentDeliveryCharge] for whatever [effectiveAddress]
+  /// currently is: by real address id when one exists, else by area id
+  /// (covers a GPS-matched [currentLocationAddress], which has no id of
+  /// its own, and a guest/new address not saved yet). Called after every
+  /// method below that can change what [effectiveAddress] resolves to —
+  /// not awaited from those (they're synchronous), so this runs in the
+  /// background and the fee updates via [notifyListeners] once it resolves.
+  Future<void> refreshDeliveryCharge() async {
+    final address = effectiveAddress;
+    final addressId = address?.id;
+    final areaId = address?.areaId;
+    if (addressId == null && areaId == null) {
+      currentDeliveryCharge = null;
+      deliveryChargeError = null;
+      notifyListeners();
+      return;
+    }
+    deliveryChargeLoading = true;
+    deliveryChargeError = null;
+    notifyListeners();
+    try {
+      currentDeliveryCharge = addressId != null
+          ? await _accountService.deliveryChargeForAddress(addressId)
+          : await _accountService.deliveryChargeForArea(areaId!);
+    } catch (e) {
+      deliveryChargeError = describeError(e);
+    } finally {
+      deliveryChargeLoading = false;
+      notifyListeners();
+    }
+  }
+
   void select(int index) {
     selectedIndex = index;
     useCurrentLocation = false;
     notifyListeners();
+    refreshDeliveryCharge();
   }
 
   /// Switches back to following the device's GPS location instead of a
@@ -85,6 +134,7 @@ class AddressState extends ChangeNotifier {
     useCurrentLocation = true;
     currentLocationMatchFailed = false;
     notifyListeners();
+    refreshDeliveryCharge();
   }
 
   /// Matches the device's reverse-geocoded governorate/area (from
@@ -169,17 +219,19 @@ class AddressState extends ChangeNotifier {
       }
     }
 
-    // Client-reported issue: "Current location" showed as its own
-    // selectable entry even when a saved address already covers that exact
-    // same area — e.g. current location resolves to Mirqab, and a "Work"
-    // address is also in Mirqab, yet the picker still defaulted to the
-    // generic current-location entry instead of that saved one. See
-    // [_preferSavedAddressForArea]'s doc for why, and for the other timing
-    // order this also has to handle.
-    if (matchedArea != null && _preferSavedAddressForArea(matchedGov.id, matchedArea.id)) {
-      return;
-    }
-
+    // Used to auto-switch to a saved address here whenever it shared the
+    // exact same governorate/area as the GPS fix (see git history /
+    // _preferSavedAddressForArea, since removed) — reasoning being a saved
+    // address always has fuller delivery details (block/street/building)
+    // than a bare GPS point. Explicitly reversed on request: "Current
+    // location" must always stay its own separate, editable entry, even
+    // when it happens to sit in the same catalog area as a saved address
+    // like "Work" — those can still be two genuinely different physical
+    // spots that just share a broad area code, and silently substituting
+    // one for the other meant editing "current location" could actually
+    // open and overwrite an unrelated saved address without any obvious
+    // sign that had happened.
+    final previousAreaId = currentLocationAddress?.areaId;
     currentLocationAddress = Address(
       title: 'Current location',
       governorateId: matchedGov.id,
@@ -189,32 +241,10 @@ class AddressState extends ChangeNotifier {
       street: street ?? '',
     );
     notifyListeners();
-  }
-
-  /// A GPS-derived address only ever has governorate/area — no block,
-  /// street, or building — while a saved address for that same area
-  /// already has full delivery details. So whenever they'd resolve to the
-  /// same area, the saved one is always the better choice, and this
-  /// switches to it (turning [useCurrentLocation] off) instead of leaving
-  /// the generic "Current location" entry as if it were meaningfully
-  /// different. Returns whether it actually switched.
-  ///
-  /// Called from two places, to cover both orderings of an inherent race:
-  /// [syncFromLocation] (GPS resolves, check the addresses already loaded)
-  /// and [hydrateAddresses]/[loadAddresses] (addresses load/arrive AFTER
-  /// GPS already resolved to a generic entry — without this second call
-  /// site, that ordering would leave the generic entry showing forever for
-  /// this session, since the retry logic that re-attempts
-  /// [syncFromLocation] only fires while [currentLocationAddress] is still
-  /// null, which it no longer would be).
-  bool _preferSavedAddressForArea(int governorateId, int areaId) {
-    final match = addresses.where((a) => a.governorateId == governorateId && a.areaId == areaId).toList();
-    if (match.isEmpty) return false;
-    useCurrentLocation = false;
-    currentLocationAddress = null;
-    selectedIndex = addresses.indexOf(match.first);
-    notifyListeners();
-    return true;
+    // Guarded so a GPS ping that resolves to the SAME area as before
+    // (common — location updates fire repeatedly) doesn't refetch the
+    // same delivery charge over and over.
+    if (matchedArea?.id != previousAreaId) refreshDeliveryCharge();
   }
 
   /// Governorate/area lists + delivery fees — needed for the address form
@@ -299,21 +329,6 @@ class AddressState extends ChangeNotifier {
     }
   }
 
-  /// Re-checks [_preferSavedAddressForArea] after a fresh address list
-  /// arrives — covers the timing order where GPS already resolved to the
-  /// generic "Current location" entry BEFORE the address list finished
-  /// loading, so there was nothing to match against yet at that point.
-  /// Without this, that entry would keep showing for the rest of the
-  /// session even once a matching saved address becomes available, since
-  /// the retry logic that re-attempts [syncFromLocation] only fires while
-  /// [currentLocationAddress] is still null — which it no longer is once
-  /// set once, matched or not.
-  void _recheckCurrentLocationAgainstSavedAddresses() {
-    final loc = currentLocationAddress;
-    if (!useCurrentLocation || loc == null || loc.governorateId == null || loc.areaId == null) return;
-    _preferSavedAddressForArea(loc.governorateId!, loc.areaId!);
-  }
-
   /// Feeds in addresses from another source that already fetched them
   /// (the checkout-init endpoint also returns the person's saved
   /// addresses) — only if nothing's loaded yet, so this never clobbers a
@@ -324,8 +339,11 @@ class AddressState extends ChangeNotifier {
     final defaultIdx = addresses.indexWhere((a) => a.isDefault);
     selectedIndex = defaultIdx >= 0 ? defaultIdx : 0;
     resolveMissingAreaIds();
-    _recheckCurrentLocationAgainstSavedAddresses();
     notifyListeners();
+    // Always refreshed, not just when useCurrentLocation is off — even with
+    // it on, effectiveAddress falls back to this just-loaded default
+    // address until/unless GPS has already resolved one of its own.
+    refreshDeliveryCharge();
   }
 
   bool _addressesRequested = false;
@@ -361,13 +379,13 @@ class AddressState extends ChangeNotifier {
         final defaultIdx = addresses.indexWhere((a) => a.isDefault);
         selectedIndex = defaultIdx >= 0 ? defaultIdx : 0;
         resolveMissingAreaIds();
-        _recheckCurrentLocationAgainstSavedAddresses();
       }
     } catch (e) {
       addressesError = describeError(e);
     } finally {
       addressesLoading = false;
       notifyListeners();
+      refreshDeliveryCharge();
     }
   }
 
@@ -433,6 +451,7 @@ class AddressState extends ChangeNotifier {
     selectedIndex = matchIndex >= 0 ? matchIndex : addresses.length - 1;
     resolveMissingAreaIds();
     notifyListeners();
+    refreshDeliveryCharge();
   }
 
   Future<void> deleteRemote(int userId, int index) async {
@@ -443,6 +462,7 @@ class AddressState extends ChangeNotifier {
     addresses.removeAt(index);
     if (selectedIndex >= addresses.length) selectedIndex = (addresses.length - 1).clamp(0, addresses.length);
     notifyListeners();
+    refreshDeliveryCharge();
   }
 
   void upsert(Address address, {int? index}) {
@@ -453,5 +473,6 @@ class AddressState extends ChangeNotifier {
       selectedIndex = addresses.length - 1;
     }
     notifyListeners();
+    refreshDeliveryCharge();
   }
 }

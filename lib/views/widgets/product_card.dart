@@ -263,6 +263,16 @@ class ProductCard extends StatelessWidget {
                             backgroundColor: AppColors.line,
                             disabledBackgroundColor: AppColors.line,
                             minimumSize: const Size.fromHeight(32),
+                            // Without this, ElevatedButton still reserves
+                            // its default ~48px touch target regardless of
+                            // minimumSize — invisible padding that doesn't
+                            // show in the button's own visual bounds, but
+                            // DOES get counted by the Column around it,
+                            // which is exactly what blew this card's fixed
+                            // height budget by a few pixels on every card
+                            // (confirmed: "RenderFlex overflowed by 7.0
+                            // pixels", product_card.dart, real screenshot).
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             padding: EdgeInsets.zero,
                             textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -281,6 +291,9 @@ class ProductCard extends StatelessWidget {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.sky,
                           minimumSize: const Size.fromHeight(32),
+                          // See the same fix's comment on the Out-of-stock
+                          // button above.
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                           padding: EdgeInsets.zero,
                           textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),

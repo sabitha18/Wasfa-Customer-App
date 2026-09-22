@@ -3,10 +3,14 @@
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@android:color/white" />
 
-    <!-- You can insert your own image assets here -->
-    <!-- <item>
+    <!-- Was just a blank white screen (this item was commented out) —
+         Flutter's own SplashScreen widget carried all the branding, which
+         only appears once the Flutter engine has actually initialized.
+         Showing the real logo here too avoids a flash of blank white on
+         first launch, before that widget can render. -->
+    <item>
         <bitmap
             android:gravity="center"
             android:src="@mipmap/launch_image" />
-    </item> -->
+    </item>
 </layer-list>

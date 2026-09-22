@@ -43,6 +43,27 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            // Confirmed real crash (2026-09-22): R8 was miscompiling a
+            // class inside the Tap payment SDK (java.lang.VerifyError on
+            // PaymentDataManager$PaymentProcessListener), only in release
+            // builds. A `-keep` rule (proguard-rules.pro) did NOT fix
+            // this — confirmed by the exact same crash reproducing after
+            // adding it — because `-keep` only protects a class from
+            // being REMOVED/RENAMED; it doesn't stop R8's separate code
+            // OPTIMIZATION pass (register allocation, inlining) from
+            // still rewriting the method bodies, which is exactly where
+            // this bug lives (a register-type-inference error inside
+            // didReceiveAuthorize/didReceiveSaveCard). Disabling
+            // minification outright removes R8 from the picture
+            // entirely, rather than trying to guess a more precise rule
+            // for a bug already confirmed to survive one attempt.
+            // Trade-off: a larger APK and no obfuscation — revisit
+            // re-enabling R8 with a properly scoped `-dontoptimize` rule
+            // for just this SDK's package once the payment flow is
+            // confirmed working, rather than leaving it blocked on
+            // getting R8's config exactly right.
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }

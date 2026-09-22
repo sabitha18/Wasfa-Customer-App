@@ -11,6 +11,7 @@ import '../../state/locale_state.dart';
 import '../../state/location_state.dart';
 import '../../viewmodels/shop_view_model.dart';
 import '../widgets/address_sheets.dart';
+import '../widgets/app_bottom_nav.dart';
 import '../widgets/page_header.dart';
 import '../widgets/product_card.dart';
 import '../widgets/product_image.dart';
@@ -18,7 +19,15 @@ import '../widgets/toast.dart';
 
 class ShopScreen extends StatelessWidget {
   final ShopFilter? initialFilter;
-  const ShopScreen({super.key, this.initialFilter});
+  /// False only for RootShell's own embedded "Shop" tab — that Scaffold
+  /// already provides the bottom nav around the whole tab set, so this
+  /// screen's own copy would double up with it. Every other place Shop
+  /// gets opened (Home's categories, Store's "Explore"/"See all", brand
+  /// pages, a banner's category link, etc.) pushes it as its own route —
+  /// same as Store's own history here — with no bottom nav of its own
+  /// otherwise, confirmed live from a real screenshot showing exactly that.
+  final bool showBottomNav;
+  const ShopScreen({super.key, this.initialFilter, this.showBottomNav = true});
 
   @override
   Widget build(BuildContext context) {
@@ -34,7 +43,7 @@ class ShopScreen extends StatelessWidget {
     }
     return ChangeNotifierProvider(
       create: (_) => ShopViewModel(initial: initialFilter, userId: userId),
-      child: const _ShopBody(),
+      child: _ShopBody(showBottomNav: showBottomNav),
     );
   }
 }
@@ -67,7 +76,8 @@ class _StickyHeaderDelegate extends SliverPersistentHeaderDelegate {
 }
 
 class _ShopBody extends StatelessWidget {
-  const _ShopBody();
+  final bool showBottomNav;
+  const _ShopBody({required this.showBottomNav});
 
   @override
   Widget build(BuildContext context) {
@@ -79,6 +89,8 @@ class _ShopBody extends StatelessWidget {
     final cart = context.read<CartState>();
     final cartCount = context.select<CartState, int>((c) => c.cartCount);
     final locale = context.watch<LocaleState>();
+    final ar = locale.isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
     final results = vm.results;
     final inPharmacy = vm.pharmacy != null;
 
@@ -95,10 +107,10 @@ class _ShopBody extends StatelessWidget {
         border: Border(bottom: BorderSide(color: AppColors.line, width: 1)),
       ),
       child: Row(children: [
-        _SortBarButton(icon: Icons.swap_vert_rounded, label: 'Sort', onTap: () => _openSort(context, vm)),
+        _SortBarButton(icon: Icons.swap_vert_rounded, label: t('Sort', 'ترتيب'), onTap: () => _openSort(context, vm)),
         const SizedBox(width: 8),
         Stack(clipBehavior: Clip.none, children: [
-          _SortBarButton(icon: Icons.filter_list_rounded, label: 'Filter', onTap: () => _openFilter(context, vm)),
+          _SortBarButton(icon: Icons.filter_list_rounded, label: t('Filter', 'تصفية'), onTap: () => _openFilter(context, vm)),
           if (vm.hasActiveFilters)
             Positioned(
               right: -2, top: -2,
@@ -127,7 +139,7 @@ class _ShopBody extends StatelessWidget {
           child: Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              vm.isLoading ? 'Loading products…' : '${results.length} products',
+              vm.isLoading ? t('Loading products…', 'جارٍ تحميل المنتجات…') : t('${results.length} products', '${results.length} منتج'),
               style: const TextStyle(color: AppColors.muted, fontSize: 12, fontWeight: FontWeight.w600),
             ),
           ),
@@ -148,7 +160,7 @@ class _ShopBody extends StatelessWidget {
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
               children: [
-                _Chip(label: 'All', on: vm.selectedParent == null, onTap: () => vm.selectParentCategory(null)),
+                _Chip(label: t('All', 'الكل'), on: vm.selectedParent == null, onTap: () => vm.selectParentCategory(null)),
                 for (final c in vm.categories)
                   _Chip(label: c.label(locale.isArabic), on: vm.selectedParent?.id == c.id, onTap: () => vm.selectParentCategory(c)),
               ],
@@ -156,24 +168,33 @@ class _ShopBody extends StatelessWidget {
           ),
         ),
       ),
-      // ── .cats2 — subcategories of the selected parent (small) — scrolls away with content ──
-      if (vm.selectedParent != null && vm.selectedParent!.hasChildren)
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.only(top: 10), // ← margin-top equivalent
-            child: SizedBox(
-              height: 38,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
-                children: [
-                  for (final sub in vm.selectedParent!.children)
-                    _Chip(label: sub.label(locale.isArabic), small: true, on: vm.categoryId == sub.id, onTap: () => vm.selectSubCategory(sub)),
-                ],
+      // ── .cats2 — subcategories, one horizontally-scrolling row per level
+      // of the drill-down path (selectedParent, then whichever child was
+      // picked, then its own child, and so on) — previously only ever
+      // showed selectedParent's direct children, with no way to drill into
+      // a picked subcategory's own children ──
+      for (int _i = 0; _i < vm.selectedCategoryPath.length; _i++)
+        if (vm.selectedCategoryPath[_i].hasChildren)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 10), // ← margin-top equivalent
+              child: SizedBox(
+                height: 38,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
+                  children: [
+                    for (final sub in vm.selectedCategoryPath[_i].children)
+                      _Chip(
+                        label: sub.label(locale.isArabic), small: true,
+                        on: _i + 1 < vm.selectedCategoryPath.length && vm.selectedCategoryPath[_i + 1].id == sub.id,
+                        onTap: () => vm.selectSubCategory(sub),
+                      ),
+                  ],
+                ),
               ),
             ),
           ),
-        ),
 
       // ── pinned sticky sort/filter bar (matches .sortbar{position:sticky;top:0}) ──
       SliverPersistentHeader(
@@ -184,11 +205,11 @@ class _ShopBody extends StatelessWidget {
       SliverToBoxAdapter(child: resHead),
 
       if (vm.isLoading && results.isEmpty)
-        const SliverFillRemaining(hasScrollBody: false, child: LoadingView(message: 'Loading products…'))
+        SliverFillRemaining(hasScrollBody: false, child: LoadingView(message: t('Loading products…', 'جارٍ تحميل المنتجات…')))
       else if (vm.error != null && results.isEmpty)
         SliverFillRemaining(hasScrollBody: false, child: ErrorRetryView(message: vm.error!, onRetry: vm.load))
       else if (results.isEmpty)
-        const SliverFillRemaining(hasScrollBody: false, child: Center(child: Text('No results', style: TextStyle(color: AppColors.muted))))
+        SliverFillRemaining(hasScrollBody: false, child: Center(child: Text(t('No results', 'لا توجد نتائج'), style: const TextStyle(color: AppColors.muted))))
       else if (vm.view == 'grid')
         // ── .pgrid ──
         SliverPadding(
@@ -249,7 +270,9 @@ class _ShopBody extends StatelessWidget {
         ),
     ];
 
-    return Scaffold(
+    return Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: Scaffold(
       backgroundColor: AppColors.bg,
       // ── .phead only shows when inside a single pharmacy storefront ──
       appBar: inPharmacy ? PageHeader(title: vm.pharmacy!) : null,
@@ -281,10 +304,10 @@ class _ShopBody extends StatelessWidget {
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                           decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: AppColors.shSm),
-                          child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                            SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
-                            SizedBox(width: 8),
-                            Text('Loading more…', style: TextStyle(fontSize: 12, color: AppColors.muted)),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                            const SizedBox(width: 8),
+                            Text(t('Loading more…', 'جارٍ تحميل المزيد…'), style: const TextStyle(fontSize: 12, color: AppColors.muted)),
                           ]),
                         ),
                       ),
@@ -295,16 +318,26 @@ class _ShopBody extends StatelessWidget {
           ],
         ),
       ),
+      bottomNavigationBar: showBottomNav ? const AppBottomNav(embedded: false) : null,
+      ),
     );
   }
 
   void _openSort(BuildContext context, ShopViewModel vm) {
-    const opts = [['pop', 'Popularity'], ['low', 'Price: low to high'], ['high', 'Price: high to low'], ['rated', 'Top rated']];
+    final isArabic = context.read<LocaleState>().isArabic;
+    final opts = [
+      ['pop', isArabic ? 'الأكثر رواجاً' : 'Popularity'],
+      ['low', isArabic ? 'السعر: من الأقل إلى الأعلى' : 'Price: low to high'],
+      ['high', isArabic ? 'السعر: من الأعلى إلى الأقل' : 'Price: high to low'],
+      ['rated', isArabic ? 'الأعلى تقييماً' : 'Top rated'],
+    ];
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
-      builder: (_) => SafeArea(
+      builder: (_) => Directionality(
+        textDirection: isArabic ? TextDirection.rtl : TextDirection.ltr,
+        child: SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -312,7 +345,7 @@ class _ShopBody extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
               decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.line, width: 1))),
               child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text('Sort by', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.navy)),
+                Text(isArabic ? 'ترتيب حسب' : 'Sort by', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.navy)),
                 InkWell(onTap: () => Navigator.pop(context), child: const Icon(Icons.close_rounded, size: 20, color: AppColors.muted)),
               ]),
             ),
@@ -331,12 +364,14 @@ class _ShopBody extends StatelessWidget {
             const SizedBox(height: 8),
           ],
         ),
+        ),
       ),
     );
   }
 
   void _openFilter(BuildContext context, ShopViewModel vm) {
     final isArabic = context.read<LocaleState>().isArabic;
+    String t(String en, String ar) => isArabic ? ar : en;
     String brandSearch = '';
     bool showAllBrands = false;
 
@@ -345,7 +380,9 @@ class _ShopBody extends StatelessWidget {
       isScrollControlled: true,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
-      builder: (_) => StatefulBuilder(
+      builder: (_) => Directionality(
+        textDirection: isArabic ? TextDirection.rtl : TextDirection.ltr,
+        child: StatefulBuilder(
         builder: (context, setSheetState) {
           final allBrands = vm.realBrands;
           final q = brandSearch.trim().toLowerCase();
@@ -366,7 +403,7 @@ class _ShopBody extends StatelessWidget {
                     padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
                     decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.line, width: 1))),
                     child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                      const Text('Filter', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.navy)),
+                      Text(t('Filter', 'تصفية'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.navy)),
                       InkWell(onTap: () => Navigator.pop(context), child: const Icon(Icons.close_rounded, size: 20, color: AppColors.muted)),
                     ]),
                   ),
@@ -378,28 +415,28 @@ class _ShopBody extends StatelessWidget {
                           // ── Offers / In-stock — surfaced first since these are the
                           // two toggles people reach for most often ──
                           _FilterRow(
-                            label: '🏷️ Offers only',
+                            label: t('🏷️ Offers only', '🏷️ العروض فقط'),
                             value: vm.offersOnly,
                             onChanged: (_) { vm.toggleOffersOnly(); setSheetState(() {}); },
                           ),
                           _FilterRow(
-                            label: '🏆 Best sellers only',
+                            label: t('🏆 Best sellers only', '🏆 الأكثر مبيعاً فقط'),
                             value: vm.bestSellersOnly,
                             onChanged: (_) { vm.toggleBestSellersOnly(); setSheetState(() {}); },
                           ),
                           _FilterRow(
-                            label: 'In stock only',
+                            label: t('In stock only', 'المتوفر فقط'),
                             value: vm.inStock,
                             onChanged: (_) { vm.toggleInStock(); setSheetState(() {}); },
                           ),
                           const SizedBox(height: 10),
-                          const Text('Pharmacy', style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.muted, fontSize: 12.5)),
+                          Text(t('Pharmacy', 'الصيدلية'), style: const TextStyle(fontWeight: FontWeight.w600, color: AppColors.muted, fontSize: 12.5)),
                           const SizedBox(height: 8),
                           Wrap(
                             spacing: 8, runSpacing: 8,
                             children: [
                               _Chip(
-                                label: 'All stores', small: true, on: vm.pharmacy == null,
+                                label: t('All stores', 'كل المتاجر'), small: true, on: vm.pharmacy == null,
                                 onTap: () { vm.setPharmacy(null); setSheetState(() {}); },
                               ),
                               for (final nm in vm.sellerNames)
@@ -410,7 +447,7 @@ class _ShopBody extends StatelessWidget {
                             ],
                           ),
                           const SizedBox(height: 14),
-                          const Text('Brand', style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.muted, fontSize: 12.5)),
+                          Text(t('Brand', 'العلامة التجارية'), style: const TextStyle(fontWeight: FontWeight.w600, color: AppColors.muted, fontSize: 12.5)),
                           const SizedBox(height: 8),
                           // ── small search box so a long brand list is still reachable ──
                           Container(
@@ -427,9 +464,9 @@ class _ShopBody extends StatelessWidget {
                               Expanded(
                                 child: TextField(
                                   textAlignVertical: TextAlignVertical.center,
-                                  decoration: const InputDecoration(
-                                    hintText: 'Search brands',
-                                    hintStyle: TextStyle(color: AppColors.muted, fontSize: 12.5),
+                                  decoration: InputDecoration(
+                                    hintText: t('Search brands', 'ابحث عن العلامات التجارية'),
+                                    hintStyle: const TextStyle(color: AppColors.muted, fontSize: 12.5),
                                     border: InputBorder.none,
                                     isCollapsed: true,
                                     contentPadding: EdgeInsets.zero,
@@ -442,9 +479,9 @@ class _ShopBody extends StatelessWidget {
                           ),
                           const SizedBox(height: 8),
                           if (matchedBrands.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 4),
-                              child: Text('No brands found', style: TextStyle(color: AppColors.muted, fontSize: 12.5)),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              child: Text(t('No brands found', 'لم يتم العثور على علامات تجارية'), style: const TextStyle(color: AppColors.muted, fontSize: 12.5)),
                             )
                           else
                             Wrap(
@@ -457,24 +494,24 @@ class _ShopBody extends StatelessWidget {
                                   ),
                                 if (hiddenCount > 0)
                                   _Chip(
-                                    label: '+$hiddenCount more', small: true, on: false,
+                                    label: t('+$hiddenCount more', '+$hiddenCount المزيد'), small: true, on: false,
                                     onTap: () { showAllBrands = true; setSheetState(() {}); },
                                   ),
                                 if (showAllBrands && q.isEmpty && allBrands.length > 10)
                                   _Chip(
-                                    label: 'Show less', small: true, on: false,
+                                    label: t('Show less', 'عرض أقل'), small: true, on: false,
                                     onTap: () { showAllBrands = false; setSheetState(() {}); },
                                   ),
                               ],
                             ),
                           const SizedBox(height: 14),
-                          const Text('Categories', style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.muted, fontSize: 12.5)),
+                          Text(t('Categories', 'الفئات'), style: const TextStyle(fontWeight: FontWeight.w600, color: AppColors.muted, fontSize: 12.5)),
                           const SizedBox(height: 8),
                           Wrap(
                             spacing: 8, runSpacing: 8,
                             children: [
                               _Chip(
-                                label: 'All categories', small: true, on: vm.selectedParent == null,
+                                label: t('All categories', 'كل الفئات'), small: true, on: vm.selectedParent == null,
                                 onTap: () { vm.selectParentCategory(null); setSheetState(() {}); },
                               ),
                               for (final c in vm.categories)
@@ -487,31 +524,37 @@ class _ShopBody extends StatelessWidget {
                           // ── subcategories of whichever parent is selected above —
                           // labeled + indented so it reads as a nested group, not
                           // a continuation of the parent chip row ──
-                          if (vm.selectedParent != null && vm.selectedParent!.hasChildren) ...[
-                            const SizedBox(height: 12),
-                            Padding(
-                              padding: const EdgeInsets.only(left: 2),
-                              child: Text(
-                                'Subcategories of ${vm.selectedParent!.label(isArabic)}',
-                                style: const TextStyle(fontWeight: FontWeight.w600, color: AppColors.muted, fontSize: 11, fontStyle: FontStyle.italic),
+                          // ── one nested, indented row per level of the
+                          // drill-down path (selectedParent, then whichever
+                          // child was picked, then its own child, and so on
+                          // for as many levels as the tree actually has) ──
+                          for (int i = 0; i < vm.selectedCategoryPath.length; i++)
+                            if (vm.selectedCategoryPath[i].hasChildren) ...[
+                              const SizedBox(height: 12),
+                              Padding(
+                                padding: const EdgeInsets.only(left: 2),
+                                child: Text(
+                                  t('Subcategories of ${vm.selectedCategoryPath[i].label(isArabic)}', 'الفئات الفرعية لـ ${vm.selectedCategoryPath[i].label(isArabic)}'),
+                                  style: const TextStyle(fontWeight: FontWeight.w600, color: AppColors.muted, fontSize: 11, fontStyle: FontStyle.italic),
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 8),
-                            Container(
-                              padding: const EdgeInsets.only(left: 10),
-                              decoration: const BoxDecoration(border: Border(left: BorderSide(color: AppColors.line, width: 2))),
-                              child: Wrap(
-                                spacing: 8, runSpacing: 8,
-                                children: [
-                                  for (final sub in vm.selectedParent!.children)
-                                    _Chip(
-                                      label: sub.label(isArabic), small: true, on: vm.categoryId == sub.id,
-                                      onTap: () { vm.selectSubCategory(sub); setSheetState(() {}); },
-                                    ),
-                                ],
+                              const SizedBox(height: 8),
+                              Container(
+                                padding: const EdgeInsets.only(left: 10),
+                                decoration: const BoxDecoration(border: Border(left: BorderSide(color: AppColors.line, width: 2))),
+                                child: Wrap(
+                                  spacing: 8, runSpacing: 8,
+                                  children: [
+                                    for (final sub in vm.selectedCategoryPath[i].children)
+                                      _Chip(
+                                        label: sub.label(isArabic), small: true,
+                                        on: i + 1 < vm.selectedCategoryPath.length && vm.selectedCategoryPath[i + 1].id == sub.id,
+                                        onTap: () { vm.selectSubCategory(sub); setSheetState(() {}); },
+                                      ),
+                                  ],
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
                           const SizedBox(height: 20),
                         ]),
                       ),
@@ -530,7 +573,7 @@ class _ShopBody extends StatelessWidget {
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
                           ),
                           onPressed: () { vm.clearFilters(); setSheetState(() {}); },
-                          child: const Text('Clear all', style: TextStyle(fontWeight: FontWeight.w700)),
+                          child: Text(t('Clear all', 'مسح الكل'), style: const TextStyle(fontWeight: FontWeight.w700)),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -544,7 +587,7 @@ class _ShopBody extends StatelessWidget {
                             elevation: 0,
                           ),
                           onPressed: () => Navigator.pop(context),
-                          child: const Text('Apply', style: TextStyle(fontWeight: FontWeight.w700)),
+                          child: Text(t('Apply', 'تطبيق'), style: const TextStyle(fontWeight: FontWeight.w700)),
                         ),
                       ),
                     ]),
@@ -554,6 +597,7 @@ class _ShopBody extends StatelessWidget {
             ),
           );
         },
+        ),
       ),
     );
   }
@@ -569,6 +613,8 @@ class _TopAppBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final location = context.watch<LocationState>();
     final addressState = context.watch<AddressState>();
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
 
     // Matches AppTopBar (Home/Store/Wishlist/Account) exactly: GPS location
     // by default, switching to a saved address once the person picks one
@@ -579,7 +625,7 @@ class _TopAppBar extends StatelessWidget {
     final usingSavedAddress = !addressState.isCurrentLocationActive && addressState.selected != null;
     final areaLabel = usingSavedAddress
         ? addressState.selected!.title
-        : (location.area?.isNotEmpty == true ? location.area! : 'Current location');
+        : (location.area?.isNotEmpty == true ? location.area! : t('Current location', 'الموقع الحالي'));
     final detailLabel = usingSavedAddress
         ? addressState.selected!.formatted
         : [location.street, location.governorate].where((s) => s != null && s!.isNotEmpty).join(' · ');
@@ -608,10 +654,10 @@ class _TopAppBar extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Deliver to $areaLabel', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: AppColors.navy, height: 1.15)),
+                      Text('${t("Deliver to", "التوصيل إلى")} $areaLabel', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: AppColors.navy, height: 1.15)),
                       Row(children: [
                         Expanded(
-                          child: Text(detailLabel.isNotEmpty ? detailLabel : 'Tap to choose your delivery address', maxLines: 1, overflow: TextOverflow.ellipsis,
+                          child: Text(detailLabel.isNotEmpty ? detailLabel : t('Tap to choose your delivery address', 'اضغط لاختيار عنوان التوصيل'), maxLines: 1, overflow: TextOverflow.ellipsis,
                               style: const TextStyle(fontSize: 11, color: AppColors.muted)),
                         ),
                         const Icon(Icons.keyboard_arrow_down_rounded, size: 14, color: AppColors.muted),
@@ -675,15 +721,15 @@ class _TopAppBar extends StatelessWidget {
                 onChanged: onQueryChanged,
                 style: const TextStyle(fontSize: 14, color: AppColors.ink),
                 cursorColor: AppColors.navy,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   isCollapsed: true,
                   filled: false,
                   fillColor: Colors.transparent,
                   border: InputBorder.none,
                   enabledBorder: InputBorder.none,
                   focusedBorder: InputBorder.none,
-                  hintText: 'Name, ingredient or concern…',
-                  hintStyle: TextStyle(color: AppColors.muted, fontSize: 14),
+                  hintText: t('Name, ingredient or concern…', 'الاسم أو المكون أو الحالة…'),
+                  hintStyle: const TextStyle(color: AppColors.muted, fontSize: 14),
                 ),
               ),
             ),
@@ -764,6 +810,7 @@ class _ProductListCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = product;
+    final ar = context.watch<LocaleState>().isArabic;
     final was = p.bestWasPrice;
     final s = p.defaultSeller;
     // Canonical key — MUST match CartState.lineKey exactly (see its doc),
@@ -866,7 +913,10 @@ class _ProductListCard extends StatelessWidget {
             GestureDetector(
               onTap: () {
                 cart.addToCartRemote(context, p, seller: s.name, price: s.price, was: s.was, apiProductId: s.productId, inStock: s.stock);
-                showToast(context, 'Added to cart');
+                // Matches ProductCard's exact wording (same toast, two
+                // places it can fire from) — keep them in sync if this
+                // ever changes.
+                showToast(context, ar ? 'أُضيف للسلة' : 'Added to cart');
               },
               child: Container(
                 width: 34, height: 34,

@@ -3,6 +3,8 @@ import '../../core/network/api_config.dart';
 import '../../core/network/api_exception.dart';
 import '../models/address.dart';
 import '../models/checkout_init.dart';
+import '../models/delivery_charge.dart';
+import '../models/legal_page.dart';
 import '../models/prescription.dart';
 import '../models/server_notification.dart';
 import '../models/wallet_transaction.dart';
@@ -13,6 +15,25 @@ class AccountService {
   AccountService._();
   static final AccountService instance = AccountService._();
   final ApiClient _client = ApiClient.instance;
+
+  /// See ApiConfig.page's doc — confirmed live for all 5 slugs. Anonymous
+  /// — no user_id needed, matches this being static legal/support content.
+  Future<LegalPage> page(String slug) async {
+    final res = await _client.get(ApiConfig.page(slug));
+    return LegalPage.fromJson(res as Map<String, dynamic>);
+  }
+
+  /// See ApiConfig.deliveryChargeByArea's doc.
+  Future<DeliveryCharge> deliveryChargeForArea(int areaId) async {
+    final res = await _client.get(ApiConfig.deliveryChargeByArea, query: {'area_id': areaId});
+    return DeliveryCharge.fromJson(res as Map<String, dynamic>);
+  }
+
+  /// See ApiConfig.deliveryChargeByAddress's doc.
+  Future<DeliveryCharge> deliveryChargeForAddress(int addressId) async {
+    final res = await _client.get(ApiConfig.deliveryChargeByAddress(addressId));
+    return DeliveryCharge.fromJson(res as Map<String, dynamic>);
+  }
 
   Future<WalletSummary> wallet(int userId) async {
     final res = await _client.get(ApiConfig.acctWallet, query: {'user_id': userId});
@@ -106,11 +127,25 @@ class AccountService {
   /// response (delivery slots, summary, promotions) reflects just that
   /// prescription's items, not the regular cart. `is_rx=0` (no
   /// prescription_id) for the regular cart's own checkout, same as before.
-  Future<CheckoutInitData> checkoutInit(int userId, {String? prescriptionId}) async {
+  /// ✅ `address_id`/`area_id` confirmed live (2026-09-18) — this used to
+  /// only ever take `user_id`, meaning its whole response (crucially
+  /// `summary.delivery_fee`/`summary.grand_total`) always reflected the
+  /// account's own DEFAULT address, never whichever one was actually
+  /// selected client-side. checkout_screen.dart worked around that by
+  /// fetching the real per-address fee separately (`GET
+  /// /app/delivery-charge(/address/{id})`) and recomputing the total
+  /// itself — arithmetic on real numbers, but still the app reconstructing
+  /// something the server should just say directly. Passing the actual
+  /// selected address/area here means the summary this returns is already
+  /// correct for it, so that workaround is gone — see
+  /// checkout_screen.dart's history for what used to be here instead.
+  Future<CheckoutInitData> checkoutInit(int userId, {String? prescriptionId, int? addressId, int? areaId}) async {
     final res = await _client.get(ApiConfig.checkoutInit, query: {
       'user_id': userId,
       'is_rx': prescriptionId != null ? 1 : 0,
       if (prescriptionId != null) 'prescription_id': prescriptionId,
+      if (addressId != null) 'address_id': addressId,
+      if (areaId != null) 'area_id': areaId,
     });
     return CheckoutInitData.fromJson(res as Map<String, dynamic>);
   }

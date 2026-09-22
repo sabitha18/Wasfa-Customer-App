@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../data/models/pharmacy_store.dart';
+import '../../state/locale_state.dart';
 import '../../views/screens/account_screen.dart';
 import '../../views/screens/brands_screen.dart';
 import '../../views/screens/cart_screen.dart';
@@ -56,7 +58,13 @@ class AppRouter {
       case Routes.product:
         return _page(ProductScreen(productId: args as int));
       case Routes.wishlist:
-        return _page(Scaffold(appBar: AppBar(title: const Text('Wishlist')), body: const WishlistScreen()));
+        return _page(Builder(builder: (context) {
+          final ar = context.watch<LocaleState>().isArabic;
+          return Directionality(
+            textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+            child: Scaffold(appBar: AppBar(title: Text(ar ? 'المفضلة' : 'Wishlist')), body: const WishlistScreen()),
+          );
+        }));
       case Routes.account:
         return _page(Scaffold(appBar: AppBar(title: const Text('Account')), body: const AccountScreen()));
       case Routes.cart:

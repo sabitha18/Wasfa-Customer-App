@@ -8,6 +8,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/widgets/async_state_view.dart';
 import '../../data/services/order_service.dart';
 import '../../state/auth_state.dart';
+import '../../state/locale_state.dart';
 import '../../state/orders_state.dart';
 import '../widgets/page_header.dart';
 import '../widgets/toast.dart';
@@ -92,6 +93,8 @@ class _TrackScreenState extends State<TrackScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
     // Was `orders.byId(widget.orderId) ?? orders.orders.first` — crashed
     // with "Bad state: No element" whenever OrdersState.orders was empty
     // (e.g. navigating here straight from a push notification tap, before
@@ -108,14 +111,21 @@ class _TrackScreenState extends State<TrackScreen> {
     // so there was never really a need to reach into OrdersState.orders
     // for rendering here in the first place.
     final status = _liveStatus ?? 'prep';
-    const labels = ['Order confirmed', 'Preparing your order', 'On the way', 'Delivered'];
+    final labels = [
+      t('Order confirmed', 'تم تأكيد الطلب'),
+      t('Preparing your order', 'جارٍ تحضير طلبك'),
+      t('On the way', 'في الطريق'),
+      t('Delivered', 'تم التوصيل'),
+    ];
     final idx = {'conf': 0, 'prep': 1, 'way': 2, 'done': 3}[status] ?? 1;
 
-    return Scaffold(
+    return Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: PageHeader(title: 'Track order · ${widget.orderId}'),
+      appBar: PageHeader(title: '${t("Track order", "تتبع الطلب")} · ${widget.orderId}'),
       body: _loading
-          ? const LoadingView(message: 'Loading tracking…')
+          ? LoadingView(message: t('Loading tracking…', 'جارٍ تحميل التتبع…'))
           : RefreshIndicator(
         onRefresh: _fetch,
         child: ListView(
@@ -148,7 +158,7 @@ class _TrackScreenState extends State<TrackScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(_riderName ?? (status == 'way' ? 'Rider' : 'Not assigned yet'),
+                      Text(_riderName ?? (status == 'way' ? t('Rider', 'السائق') : t('Not assigned yet', 'لم يُعيَّن بعد')),
                           style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.navy)),
                       const SizedBox(height: 1),
                       // Real vehicle info (confirmed live on the driver
@@ -161,12 +171,12 @@ class _TrackScreenState extends State<TrackScreen> {
                       // when none is).
                       if (_riderName != null)
                         Text(
-                          _vehicleLabel(),
+                          _vehicleLabel(ar),
                           style: const TextStyle(fontSize: 11.5, color: AppColors.sky, fontWeight: FontWeight.w600),
                         ),
                       const SizedBox(height: 2),
                       Text(
-                        _eta != null ? '${widget.orderId} · Arriving in ~$_eta' : widget.orderId,
+                        _eta != null ? '${widget.orderId} · ${t("Arriving in ~$_eta", "يصل خلال ~$_eta")}' : widget.orderId,
                         style: const TextStyle(fontSize: 10.5, color: AppColors.muted),
                       ),
                     ],
@@ -216,12 +226,13 @@ class _TrackScreenState extends State<TrackScreen> {
                     elevation: 0,
                   ),
                   onPressed: () => Navigator.of(context).popUntil((r) => r.isFirst),
-                  child: const Text('Home', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  child: Text(t('Home', 'الرئيسية'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                 ),
               ),
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -236,7 +247,7 @@ class _TrackScreenState extends State<TrackScreen> {
   /// e.g. "Motorbike · 123R", or just "Motorbike"/"123R" if only one of the
   /// two is known, falling back to a generic label if a rider is assigned
   /// but neither vehicle field came through.
-  String _vehicleLabel() {
+  String _vehicleLabel(bool ar) {
     final type = _vehicleType?.trim();
     final plate = _plateNumber?.trim().toUpperCase();
     final hasType = type != null && type.isNotEmpty;
@@ -244,7 +255,7 @@ class _TrackScreenState extends State<TrackScreen> {
     if (hasType && hasPlate) return '${type[0].toUpperCase()}${type.substring(1)} · $plate';
     if (hasType) return '${type[0].toUpperCase()}${type.substring(1)}';
     if (hasPlate) return plate;
-    return 'Express Rider';
+    return ar ? 'سائق التوصيل' : 'Express Rider';
   }
 
   /// Was just `showToast(context, 'Calling rider…')` — a fake toast that
@@ -257,17 +268,18 @@ class _TrackScreenState extends State<TrackScreen> {
   /// has access to `lib/`, not the project root, so that dependency
   /// couldn't be added directly here. Run `flutter pub add url_launcher`.
   Future<void> _callRider(BuildContext context) async {
+    final ar = context.read<LocaleState>().isArabic;
     final phone = _riderPhone;
     if (phone == null || phone.trim().isEmpty) {
-      showToast(context, 'No rider phone number available yet.');
+      showToast(context, ar ? 'رقم هاتف السائق غير متوفر بعد.' : 'No rider phone number available yet.');
       return;
     }
     final uri = Uri(scheme: 'tel', path: phone);
     try {
       final launched = await launchUrl(uri);
-      if (!launched && context.mounted) showErrorToast(context, 'Couldn\'t open the phone dialer.');
+      if (!launched && context.mounted) showErrorToast(context, ar ? 'تعذر فتح تطبيق الاتصال.' : 'Couldn\'t open the phone dialer.');
     } catch (_) {
-      if (context.mounted) showErrorToast(context, 'Couldn\'t open the phone dialer.');
+      if (context.mounted) showErrorToast(context, ar ? 'تعذر فتح تطبيق الاتصال.' : 'Couldn\'t open the phone dialer.');
     }
   }
 }
@@ -285,6 +297,7 @@ class _TrackMapArea extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ar = context.watch<LocaleState>().isArabic;
     if (status == 'way' && lat != null && lng != null) {
       return SizedBox(
         height: 210,
@@ -296,7 +309,7 @@ class _TrackMapArea extends StatelessWidget {
               markerId: const MarkerId('rider'),
               position: LatLng(lat!, lng!),
               icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRose),
-              infoWindow: const InfoWindow(title: 'Your rider'),
+              infoWindow: InfoWindow(title: ar ? 'سائقك' : 'Your rider'),
             ),
           },
           myLocationButtonEnabled: false,
@@ -313,15 +326,15 @@ class _TrackMapArea extends StatelessWidget {
     final IconData icon;
     switch (status) {
       case 'way':
-        message = 'Waiting for your rider\'s live location…';
+        message = ar ? 'بانتظار الموقع المباشر لسائقك…' : 'Waiting for your rider\'s live location…';
         icon = Icons.my_location_rounded;
         break;
       case 'done':
-        message = 'Delivered — thanks for ordering with WASFA!';
+        message = ar ? 'تم التوصيل — شكراً لطلبك من وصفة!' : 'Delivered — thanks for ordering with WASFA!';
         icon = Icons.check_circle_rounded;
         break;
       default:
-        message = 'Live driver location will appear here once your order is on the way.';
+        message = ar ? 'سيظهر موقع السائق المباشر هنا بمجرد أن يكون طلبك في الطريق.' : 'Live driver location will appear here once your order is on the way.';
         icon = Icons.local_shipping_rounded;
     }
 

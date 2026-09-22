@@ -4,6 +4,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/async_state_view.dart';
 import '../../state/auth_state.dart';
+import '../../state/locale_state.dart';
 import '../../state/orders_state.dart';
 import '../widgets/page_header.dart';
 
@@ -28,17 +29,21 @@ class _WalletScreenState extends State<WalletScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthState>();
     final orders = context.watch<OrdersState>();
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
 
     if (!auth.isSignedIn) {
-      return Scaffold(
-        appBar: PageHeader(title: 'Wallet'),
+      return Directionality(
+        textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+        child: Scaffold(
+        appBar: PageHeader(title: t('Wallet', 'المحفظة')),
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               const Text('👛', style: TextStyle(fontSize: 34)),
               const SizedBox(height: 10),
-              const Text('Sign in to see your wallet', style: TextStyle(color: AppColors.muted)),
+              Text(t('Sign in to see your wallet', 'سجّل الدخول لعرض محفظتك'), style: const TextStyle(color: AppColors.muted)),
               const SizedBox(height: 14),
               ElevatedButton(
                 onPressed: () async {
@@ -46,18 +51,21 @@ class _WalletScreenState extends State<WalletScreen> {
                   if (ok == true && context.mounted) context.read<OrdersState>().loadWallet(context.read<AuthState>().userId!);
                 },
                 style: ElevatedButton.styleFrom(backgroundColor: AppColors.navy, foregroundColor: Colors.white),
-                child: const Text('Sign in'),
+                child: Text(t('Sign in', 'تسجيل الدخول')),
               ),
             ]),
           ),
         ),
+        ),
       );
     }
 
-    return Scaffold(
-      appBar: PageHeader(title: 'Wallet'),
+    return Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: Scaffold(
+      appBar: PageHeader(title: t('Wallet', 'المحفظة')),
       body: (orders.walletLoading && orders.transactions.isEmpty)
-          ? const LoadingView(message: 'Loading wallet…')
+          ? LoadingView(message: t('Loading wallet…', 'جارٍ تحميل المحفظة…'))
           : (orders.walletError != null && orders.transactions.isEmpty)
               ? ErrorRetryView(message: orders.walletError!, onRetry: () => orders.loadWallet(auth.userId!))
               : RefreshIndicator(
@@ -75,17 +83,17 @@ class _WalletScreenState extends State<WalletScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Balance', style: TextStyle(color: Colors.white70, fontSize: 12.5)),
+                Text(t('Balance', 'الرصيد'), style: const TextStyle(color: Colors.white70, fontSize: 12.5)),
                 const SizedBox(height: 4),
                 Text(Formatters.money(orders.wallet), style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w800)),
                 const SizedBox(height: 14),
-                Text('⭐ ${orders.rewards} points', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                Text('⭐ ${orders.rewards} ${t("points", "نقطة")}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
               ],
             ),
           ),
-          const Padding(padding: EdgeInsets.symmetric(vertical: 16), child: Text('Transactions', style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.muted, fontSize: 12.5))),
+          Padding(padding: const EdgeInsets.symmetric(vertical: 16), child: Text(t('Transactions', 'المعاملات'), style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.muted, fontSize: 12.5))),
           if (orders.transactions.isEmpty)
-            const Padding(padding: EdgeInsets.symmetric(vertical: 20), child: Center(child: Text('No transactions yet', style: TextStyle(color: AppColors.muted)))),
+            Padding(padding: const EdgeInsets.symmetric(vertical: 20), child: Center(child: Text(t('No transactions yet', 'لا توجد معاملات بعد'), style: const TextStyle(color: AppColors.muted)))),
           for (final tx in orders.transactions)
             Container(
               margin: const EdgeInsets.only(bottom: 10),
@@ -106,6 +114,7 @@ class _WalletScreenState extends State<WalletScreen> {
             ),
         ],
         ),
+      ),
       ),
     );
   }

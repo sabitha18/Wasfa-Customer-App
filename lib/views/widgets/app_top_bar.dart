@@ -5,6 +5,7 @@ import '../../core/theme/app_colors.dart';
 import '../../data/services/notification_history_store.dart';
 import '../../state/address_state.dart';
 import '../../state/cart_state.dart';
+import '../../state/locale_state.dart';
 import '../../state/location_state.dart';
 import 'address_sheets.dart';
 
@@ -21,6 +22,8 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
     final location = context.watch<LocationState>();
     final addressState = context.watch<AddressState>();
     final notifications = context.watch<NotificationHistoryStore>();
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
 
     // "Deliver to ..." follows the device's GPS location by default; once
     // the person explicitly picks a saved address from the picker sheet,
@@ -29,14 +32,20 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
     final usingSavedAddress = !addressState.isCurrentLocationActive && addressState.selected != null;
     final areaLabel = usingSavedAddress
         ? addressState.selected!.title
-        : (location.area?.isNotEmpty == true ? location.area! : 'Current location');
+        : (location.area?.isNotEmpty == true ? location.area! : t('Current location', 'الموقع الحالي'));
     final detailLabel = usingSavedAddress
         ? addressState.selected!.formatted
         : [location.street, location.governorate].where((s) => s != null && s!.isNotEmpty).join(' · ');
 
     void openPicker() => showAddressPickerSheet(context, addressState, location);
 
-    return AppBar(
+    // Scoped to just this bar's own content — Scaffold.appBar is a sibling
+    // slot to Scaffold.body, not a descendant of it, so a Directionality
+    // wrapped around a screen's body (see AccountScreen/HomeScreen) never
+    // reaches this; it needs its own, same as a bottom sheet or dialog does.
+    return Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: AppBar(
       backgroundColor: AppColors.white,
       elevation: 0,
       automaticallyImplyLeading: false,
@@ -69,13 +78,13 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Deliver to $areaLabel', overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: AppColors.navy, height: 1.15)),
+                      Text('${t("Deliver to", "التوصيل إلى")} $areaLabel', overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: AppColors.navy, height: 1.15)),
                       const SizedBox(height: 1),
                       Row(
                         children: [
                           Flexible(
                             child: Text(
-                              detailLabel.isNotEmpty ? detailLabel : 'Tap to choose your delivery address',
+                              detailLabel.isNotEmpty ? detailLabel : t('Tap to choose your delivery address', 'اضغط لاختيار عنوان التوصيل'),
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(fontSize: 11, color: AppColors.muted),
                             ),
@@ -111,16 +120,17 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
               decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(12)),
-              child: const Row(
+              child: Row(
                 children: [
-                  Icon(Icons.search_rounded, size: 18, color: AppColors.muted),
-                  SizedBox(width: 9),
-                  Text('Search for products or stores', style: TextStyle(color: AppColors.muted, fontSize: 13)),
+                  const Icon(Icons.search_rounded, size: 18, color: AppColors.muted),
+                  const SizedBox(width: 9),
+                  Text(t('Search for products or stores', 'ابحث عن منتجات أو متاجر'), style: const TextStyle(color: AppColors.muted, fontSize: 13)),
                 ],
               ),
             ),
           ),
         ],
+      ),
       ),
     );
   }

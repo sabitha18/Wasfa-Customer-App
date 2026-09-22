@@ -70,6 +70,7 @@ class HomeViewModel extends ChangeNotifier {
     // position regardless of which address is selected for delivery).
     try {
       stores = await _service.stores(lat: lat, lng: lng, governorateId: governorateId, areaId: areaId);
+      _repo.cacheStores(stores);
     } catch (_) {
       stores = const [];
     }
@@ -103,6 +104,7 @@ class HomeViewModel extends ChangeNotifier {
     _lastAreaId = areaId;
     try {
       stores = await _service.stores(lat: lat, lng: lng, governorateId: governorateId, areaId: areaId);
+      _repo.cacheStores(stores);
       notifyListeners();
     } catch (_) {
       // Keep whatever store list is already showing rather than wiping it

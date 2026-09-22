@@ -145,10 +145,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _save() async {
+    final ar = context.read<LocaleState>().isArabic;
     final auth = context.read<AuthState>();
     if (!auth.isSignedIn) return;
     if (_name.text.trim().isEmpty) {
-      showErrorToast(context, 'Please enter your name.');
+      showErrorToast(context, ar ? 'يرجى إدخال اسمك.' : 'Please enter your name.');
       return;
     }
     // The save API still wants first_name/last_name as two separate keys
@@ -179,7 +180,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (!mounted) return;
       await auth.refreshUser(updated);
       if (!mounted) return;
-      showToast(context, 'Profile saved');
+      showToast(context, ar ? 'تم حفظ الملف الشخصي' : 'Profile saved');
       Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
@@ -190,6 +191,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _openResetPw() {
+    final ar = context.read<LocaleState>().isArabic;
     final current = TextEditingController();
     final newPw = TextEditingController();
     final confirm = TextEditingController();
@@ -198,7 +200,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
-      builder: (sheetContext) => Padding(
+      builder: (sheetContext) => Directionality(
+        textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+        child: Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.of(sheetContext).viewInsets.bottom),
         child: SafeArea(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -207,7 +211,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
               decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.line, width: 1))),
               child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text('Reset password', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 17, color: AppColors.navy)),
+                Text(ar ? 'إعادة تعيين كلمة المرور' : 'Reset password', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17, color: AppColors.navy)),
                 InkWell(
                   onTap: () => Navigator.pop(sheetContext),
                   borderRadius: BorderRadius.circular(9),
@@ -223,9 +227,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 14, 18, 6),
               child: Column(children: [
-                _afield('Current password', current, obscure: true),
-                _afield('New password', newPw, obscure: true),
-                _afield('Confirm new password', confirm, obscure: true),
+                _afield(ar ? 'كلمة المرور الحالية' : 'Current password', current, obscure: true),
+                _afield(ar ? 'كلمة المرور الجديدة' : 'New password', newPw, obscure: true),
+                _afield(ar ? 'تأكيد كلمة المرور الجديدة' : 'Confirm new password', confirm, obscure: true),
               ]),
             ),
             Container(
@@ -244,21 +248,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   // so there's nothing to actually change here yet.
                   onPressed: () {
                     if (newPw.text.length < 6) {
-                      showErrorToast(sheetContext, 'Password too short');
+                      showErrorToast(sheetContext, ar ? 'كلمة المرور قصيرة جداً' : 'Password too short');
                       return;
                     }
                     if (newPw.text != confirm.text) {
-                      showErrorToast(sheetContext, "Passwords don't match");
+                      showErrorToast(sheetContext, ar ? 'كلمتا المرور غير متطابقتين' : "Passwords don't match");
                       return;
                     }
                     Navigator.pop(sheetContext);
-                    showToast(context, 'Password changed');
+                    showToast(context, ar ? 'تم تغيير كلمة المرور' : 'Password changed');
                   },
-                  child: const Text('Save', style: TextStyle(fontWeight: FontWeight.w700)),
+                  child: Text(ar ? 'حفظ' : 'Save', style: const TextStyle(fontWeight: FontWeight.w700)),
                 ),
               ),
             ),
           ]),
+        ),
         ),
       ),
     );
@@ -326,16 +331,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _pickOption(String title, List<String> options, String? current, ValueChanged<String> onPicked) {
+  void _pickOption(String title, List<String> options, String? current, ValueChanged<String> onPicked, {String Function(String)? labelFor}) {
+    final ar = context.read<LocaleState>().isArabic;
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
-      builder: (sheetContext) => SafeArea(
+      builder: (sheetContext) => Directionality(
+        textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+        child: SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Padding(padding: const EdgeInsets.all(16), child: Text(title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.navy))),
           for (final o in options)
             ListTile(
-              title: Text(o),
+              title: Text(labelFor?.call(o) ?? o),
               trailing: current == o ? const Icon(Icons.check_rounded, color: AppColors.sky) : null,
               onTap: () {
                 onPicked(o);
@@ -344,6 +352,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           const SizedBox(height: 8),
         ]),
+        ),
       ),
     );
   }
@@ -351,10 +360,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // .arow with the phone prefix fixed at 58px (HTML: flex:0 0 58px) instead
   // of an equal split, so the actual number field gets the rest of the row.
   Widget _phoneRow(TextEditingController phone) {
+    final ar = context.read<LocaleState>().isArabic;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(width: 64, child: _afield('Phone', TextEditingController(text: '+965'), readOnly: true)),
+        SizedBox(width: 64, child: _afield(ar ? 'رقم الهاتف' : 'Phone', TextEditingController(text: '+965'), readOnly: true)),
         const SizedBox(width: 10),
         Expanded(child: _afield('\u00A0', phone, type: TextInputType.phone)),
       ],
@@ -381,22 +391,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final isArabic = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => isArabic ? arabic : en;
     final genderLabel = _gender == 'Male'
-        ? (isArabic ? 'ذكر' : 'Male')
+        ? t('Male', 'ذكر')
         : _gender == 'Female'
-            ? (isArabic ? 'أنثى' : 'Female')
+            ? t('Female', 'أنثى')
             : _gender == 'Other'
-                ? (isArabic ? 'أخرى' : 'Other')
+                ? t('Other', 'أخرى')
                 : null;
     final subtitleParts = <String>[
-      if (_age != null) '$_age ${isArabic ? "سنة" : "yrs"}',
+      if (_age != null) '$_age ${t("yrs", "سنة")}',
       if (genderLabel != null) genderLabel,
       if (_bloodType != null) _bloodType!,
     ];
 
-    return Scaffold(
+    return Directionality(
+      textDirection: isArabic ? TextDirection.rtl : TextDirection.ltr,
+      child: Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: PageHeader(title: 'Profile'),
+      appBar: PageHeader(title: t('Profile', 'الملف الشخصي')),
       body: ListView(
         padding: const EdgeInsets.only(bottom: 30),
         children: [
@@ -416,7 +429,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 Positioned(
                   bottom: -2, right: -2,
                   child: InkWell(
-                    onTap: () => showToast(context, "Photo upload isn't available yet"),
+                    onTap: () => showToast(context, t("Photo upload isn't available yet", 'رفع الصورة غير متاح حالياً')),
                     borderRadius: BorderRadius.circular(15),
                     child: Container(
                       width: 30, height: 30,
@@ -429,7 +442,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ]),
               const SizedBox(height: 12),
               Text(
-                _name.text.trim().isEmpty ? 'WASFA customer' : _name.text,
+                _name.text.trim().isEmpty ? t('WASFA customer', 'عميل وصفة') : _name.text,
                 style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700, color: AppColors.navy),
               ),
               if (subtitleParts.isNotEmpty) ...[
@@ -443,28 +456,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 12),
 
           // Personal information
-          _profCard('Personal information', [
-            _afield('Name', _name),
-            _afield('Civil ID', _civilId, type: TextInputType.number, maxLength: 12),
-            _afield('Email', _email, type: TextInputType.emailAddress),
+          _profCard(t('Personal information', 'المعلومات الشخصية'), [
+            _afield(t('Name', 'الاسم'), _name),
+            _afield(t('Civil ID', 'الرقم المدني'), _civilId, type: TextInputType.number, maxLength: 12),
+            _afield(t('Email', 'البريد الإلكتروني'), _email, type: TextInputType.emailAddress),
             _phoneRow(_phone),
             _arow([
-              _apick('Date of birth', _dob != null ? '${_dob!.year}-${_dob!.month.toString().padLeft(2, '0')}-${_dob!.day.toString().padLeft(2, '0')}' : 'Not set', _pickDob),
-              _apick('Sex', genderLabel ?? 'Not set', () => _pickOption('Sex', ['Female', 'Male', 'Other'], _gender, (v) => setState(() => _gender = v))),
+              _apick(t('Date of birth', 'تاريخ الميلاد'), _dob != null ? '${_dob!.year}-${_dob!.month.toString().padLeft(2, '0')}-${_dob!.day.toString().padLeft(2, '0')}' : t('Not set', 'غير محدد'), _pickDob),
+              _apick(t('Sex', 'الجنس'), genderLabel ?? t('Not set', 'غير محدد'), () => _pickOption(
+                    t('Sex', 'الجنس'),
+                    ['Female', 'Male', 'Other'],
+                    _gender,
+                    (v) => setState(() => _gender = v),
+                    labelFor: (v) => t(v, {'Female': 'أنثى', 'Male': 'ذكر', 'Other': 'أخرى'}[v] ?? v),
+                  )),
             ]),
-            _afield('Nationality', _nationality),
+            _afield(t('Nationality', 'الجنسية'), _nationality),
           ]),
 
           // Health information
-          _profCard('Health information', [
-            _arow([_afield('Weight (kg)', _weight, type: TextInputType.number), _afield('Height (cm)', _height, type: TextInputType.number)]),
-            _apick('Blood type', _bloodType ?? 'Not set', () => _pickOption('Blood type', _bloodTypes, _bloodType, (v) => setState(() => _bloodType = v))),
+          _profCard(t('Health information', 'المعلومات الصحية'), [
+            _arow([_afield(t('Weight (kg)', 'الوزن (كجم)'), _weight, type: TextInputType.number), _afield(t('Height (cm)', 'الطول (سم)'), _height, type: TextInputType.number)]),
+            _apick(t('Blood type', 'فصيلة الدم'), _bloodType ?? t('Not set', 'غير محدد'), () => _pickOption(t('Blood type', 'فصيلة الدم'), _bloodTypes, _bloodType, (v) => setState(() => _bloodType = v))),
             const SizedBox(height: 2),
           ]),
 
           // Emergency contact
-          _profCard('Emergency contact', [
-            _arow([_afield('Contact name', _emergName), _afield('Relationship', _emergRel)]),
+          _profCard(t('Emergency contact', 'جهة اتصال الطوارئ'), [
+            _arow([_afield(t('Contact name', 'اسم جهة الاتصال'), _emergName), _afield(t('Relationship', 'صلة القرابة'), _emergRel)]),
             _phoneRow(_emergPhone),
           ]),
 
@@ -478,10 +497,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
               ),
-              child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                Icon(Icons.lock_outline_rounded, size: 17),
-                SizedBox(width: 8),
-                Text('Reset password', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Icon(Icons.lock_outline_rounded, size: 17),
+                const SizedBox(width: 8),
+                Text(t('Reset password', 'إعادة تعيين كلمة المرور'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
               ]),
             ),
           ),
@@ -497,10 +516,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               child: _saving
                   ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white))
-                  : const Text('Save profile', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                  : Text(t('Save profile', 'حفظ الملف الشخصي'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
             ),
           ),
         ],
+      ),
       ),
     );
   }

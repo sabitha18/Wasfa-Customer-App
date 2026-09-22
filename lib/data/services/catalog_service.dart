@@ -6,6 +6,7 @@ import '../models/coupon_result.dart';
 import '../models/home_feed.dart';
 import '../models/pharmacy_store.dart';
 import '../models/product.dart';
+import '../models/seller_banner.dart';
 
 /// Product listing/detail, home feed, areas, coupon check. `products()` and
 /// `product()` take an optional `user_id` — without it, the backend has no
@@ -48,8 +49,10 @@ class CatalogService {
     String? category,
     int? categoryId,
     String? brand,
+    List<int>? brandIds,
     String sort = 'pop',
     bool inStock = false,
+    bool offersOnly = false,
     int page = 1,
     int perPage = 24,
     int? shop, // filter to a single store's catalogue (store id = shop user_id)
@@ -58,9 +61,15 @@ class CatalogService {
     final res = await _client.get(ApiConfig.products, query: {
       'q': query,
       'category': categoryId ?? category,
-      'brand': brand,
+      // ✅ Confirmed live (2026-09-18): comma-separated brand ids, matching
+      // the real `brand_id` field now on every product. Replaces the old
+      // client-side name-matching filter (see ShopViewModel.results'
+      // history) — that was never sent as a server param in the first
+      // place once brand ids became available.
+      'brand': (brandIds != null && brandIds.isNotEmpty) ? brandIds.join(',') : brand,
       'sort': sort,
       if (inStock) 'in_stock': 1,
+      if (offersOnly) 'offers': 1,
       if (shop != null) 'shop': shop,
       if (userId != null) 'user_id': userId,
       'page': page,
@@ -72,6 +81,28 @@ class CatalogService {
   Future<Product> product(String sku, {int? userId}) async {
     final res = await _client.get(ApiConfig.product(sku), query: userId != null ? {'user_id': userId} : null);
     return Product.fromJson(res as Map<String, dynamic>);
+  }
+
+  /// `POST /app/product/{sku}/review` — confirmed live in the updated
+  /// Postman collection (2026-09-17), form-data body: rating, name, email,
+  /// user_id, comment. See ApiConfig.productReview's doc for why there's no
+  /// saved example response to confirm a success shape against — this just
+  /// throws on a non-2xx status (via ApiClient) and otherwise assumes it
+  /// worked. [name]/[email] are sent even though the app doesn't have a
+  /// dedicated "guest review" flow — the signed-in person's own profile
+  /// name/email fill these in at the call site (product_screen.dart) rather
+  /// than leaving them blank, since the endpoint accepts them.
+  Future<void> submitReview(String sku, {required int userId, required int rating, String name = '', String email = '', String comment = ''}) async {
+    await withFallbackMessage(
+      () => _client.post(ApiConfig.productReview(sku), body: {
+        'rating': rating,
+        'name': name,
+        'email': email,
+        'user_id': userId,
+        'comment': comment,
+      }),
+      'Couldn\'t submit your review right now.',
+    );
   }
 
   /// Store marketplace list (home "Nearest / Browse all stores").
@@ -98,6 +129,13 @@ class CatalogService {
     });
     final list = (res is Map ? res['stores'] ?? res['data'] ?? res['items'] : null) ?? (res is List ? res : const []);
     return (list as List).map((e) => PharmacyStore.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  /// See ApiConfig.sellerBanners' doc.
+  Future<List<SellerBanner>> sellerBanners(int shopId) async {
+    final res = await _client.get(ApiConfig.sellerBanners(shopId));
+    final list = (res is Map ? res['banners'] : null) ?? (res is List ? res : const []);
+    return (list as List).map((e) => SellerBanner.fromJson(e as Map<String, dynamic>)).toList();
   }
 
   Future<AreaCatalog> areas() async {

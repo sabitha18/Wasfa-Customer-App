@@ -7,6 +7,7 @@ import '../../core/routing/app_routes.dart';
 import '../../core/widgets/async_state_view.dart';
 import '../../data/models/order.dart';
 import '../../state/auth_state.dart';
+import '../../state/locale_state.dart';
 import '../../state/orders_state.dart';
 import '../widgets/page_header.dart';
 import 'order_detail_screen.dart';
@@ -54,13 +55,17 @@ class _RequestsScreenState extends State<RequestsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
+    return Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: PageHeader(title: 'My requests'),
+      appBar: PageHeader(title: t('My requests', 'طلباتي الأخرى')),
       body: RefreshIndicator(
         onRefresh: _load,
         child: _loading && _entries.isEmpty
-            ? const LoadingView(message: 'Loading your requests…')
+            ? LoadingView(message: t('Loading your requests…', 'جارٍ تحميل طلباتك الأخرى…'))
             : (_error != null && _entries.isEmpty)
                 ? ErrorRetryView(message: _error!, onRetry: _load)
                 : _entries.isEmpty
@@ -79,6 +84,7 @@ class _RequestsScreenState extends State<RequestsScreen> {
                         },
                       ),
       ),
+      ),
     );
   }
 }
@@ -89,6 +95,7 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ar = context.watch<LocaleState>().isArabic;
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 50),
@@ -103,7 +110,7 @@ class _EmptyState extends StatelessWidget {
               child: const Icon(Icons.assignment_return_outlined, size: 36, color: AppColors.sky),
             ),
             const SizedBox(height: 20),
-            const Text('No cancellation or return requests yet', textAlign: TextAlign.center, style: TextStyle(fontSize: 19, fontWeight: FontWeight.w700, color: AppColors.navy)),
+            Text(ar ? 'لا توجد طلبات إلغاء أو إرجاع بعد' : 'No cancellation or return requests yet', textAlign: TextAlign.center, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700, color: AppColors.navy)),
             const SizedBox(height: 18),
             // .btn-sky — solid sky, auto-width
             ElevatedButton(
@@ -113,7 +120,7 @@ class _EmptyState extends StatelessWidget {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
               ),
               onPressed: onBrowseOrders,
-              child: const Text('My orders', style: TextStyle(fontWeight: FontWeight.w700)),
+              child: Text(ar ? 'طلباتي' : 'My orders', style: const TextStyle(fontWeight: FontWeight.w700)),
             ),
           ],
         ),
@@ -130,6 +137,8 @@ class _RequestCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
     final isCancel = type == 'cancel';
     final statusColors = {
       'pending': (const Color(0xFFFFF6E9), AppColors.warn),
@@ -149,9 +158,9 @@ class _RequestCard extends StatelessWidget {
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('${isCancel ? '⛔' : '↩︎'} ${isCancel ? 'Cancellation request' : 'Return request'}', style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: AppColors.navy)),
+                  Text('${isCancel ? '⛔' : '↩︎'} ${isCancel ? t("Cancellation request", "طلب إلغاء") : t("Return request", "طلب إرجاع")}', style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: AppColors.navy)),
                   const SizedBox(height: 2),
-                  Text('Order $orderCode · ${Formatters.dateShort(req.ts)}', style: const TextStyle(fontSize: 10.5, color: AppColors.muted, fontWeight: FontWeight.w500)),
+                  Text('${t("Order", "الطلب")} $orderCode · ${Formatters.dateShort(req.ts)}', style: const TextStyle(fontSize: 10.5, color: AppColors.muted, fontWeight: FontWeight.w500)),
                 ]),
               ),
               Container(
@@ -170,7 +179,7 @@ class _RequestCard extends StatelessWidget {
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(
-                    req.items.isNotEmpty ? '${req.items.length} item(s)' : (req.amount != null ? Formatters.money(req.amount!) : ''),
+                    req.items.isNotEmpty ? '${req.items.length} ${t("item(s)", "عنصر")}' : (req.amount != null ? Formatters.money(req.amount!) : ''),
                     style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.navy),
                   ),
                   if (req.reason.isNotEmpty) Text(req.reason, style: const TextStyle(fontSize: 12, color: AppColors.muted)),
@@ -178,10 +187,10 @@ class _RequestCard extends StatelessWidget {
               ),
               InkWell(
                 onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => OrderDetailScreen(orderId: orderCode))),
-                child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                  Text('Order details', style: TextStyle(color: AppColors.sky, fontWeight: FontWeight.w700, fontSize: 12.5)),
-                  SizedBox(width: 3),
-                  Icon(Icons.chevron_right_rounded, color: AppColors.sky, size: 16),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text(t('Order details', 'تفاصيل الطلب'), style: const TextStyle(color: AppColors.sky, fontWeight: FontWeight.w700, fontSize: 12.5)),
+                  const SizedBox(width: 3),
+                  Icon(ar ? Icons.chevron_left_rounded : Icons.chevron_right_rounded, color: AppColors.sky, size: 16),
                 ]),
               ),
             ]),
@@ -199,7 +208,7 @@ class _RequestCard extends StatelessWidget {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                       decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(8)),
-                      child: Text('📦 ${it.name.isNotEmpty ? it.name : 'Item'} ×${it.qty}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.navy)),
+                      child: Text('📦 ${it.name.isNotEmpty ? it.name : t("Item", "عنصر")} ×${it.qty}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.navy)),
                     ),
                 ],
               ),

@@ -1,18 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 import '../../core/routing/app_routes.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/formatters.dart';
 import '../../data/models/pharmacy_store.dart';
+import '../../data/models/seller_banner.dart';
 import '../../state/auth_state.dart';
 import '../../state/cart_state.dart';
+import '../../state/locale_state.dart';
 import '../../viewmodels/shop_view_model.dart';
 import '../../viewmodels/store_view_model.dart';
+import '../widgets/app_bottom_nav.dart';
 import '../widgets/app_top_bar.dart';
 import '../widgets/product_card.dart';
 import '../widgets/section_header.dart';
 import 'brands_screen.dart';
-import 'home_screen.dart' show PromoCard;
 import 'shop_screen.dart';
 
 class StoreScreen extends StatelessWidget {
@@ -58,8 +61,12 @@ class _StoreBody extends StatelessWidget {
     final vm = context.watch<StoreViewModel>();
     final cart = context.watch<CartState>();
     final name = store.name;
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
 
-    return Scaffold(
+    return Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: Scaffold(
       // .appbar — same persistent location/search/Rx/cart bar as Home, per
       // renderAppbar(): shown on home/store/shop/wishlist/account.
       appBar: const AppTopBar(),
@@ -87,7 +94,7 @@ class _StoreBody extends StatelessWidget {
                               height: 38,
                               decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, boxShadow: AppColors.shSm),
                               alignment: Alignment.center,
-                              child: const Icon(Icons.arrow_back_rounded, size: 19, color: AppColors.navy),
+                              child: Icon(ar ? Icons.arrow_forward_rounded : Icons.arrow_back_rounded, size: 19, color: AppColors.navy),
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -115,7 +122,7 @@ class _StoreBody extends StatelessWidget {
                           children: [
                             const Icon(Icons.electric_moped, size: 16, color: AppColors.freeDeliveryOrange),
                             const SizedBox(width: 7),
-                            const Text('Free delivery on your next order', style: TextStyle(color: AppColors.freeDeliveryOrange, fontSize: 13, fontWeight: FontWeight.w700)),
+                            Text(t('Free delivery on your next order', 'توصيل مجاني لطلبك القادم'), style: const TextStyle(color: AppColors.freeDeliveryOrange, fontSize: 13, fontWeight: FontWeight.w700)),
                           ],
                         ),
                       ),
@@ -124,66 +131,21 @@ class _StoreBody extends StatelessWidget {
                 ),
               ),
 
-              // .carousel — same 3-card promo pattern as Home, first card = this store
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: SizedBox(
-                    height: 188,
-                    child: ListView(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-                      children: [
-                        PromoCard(
-                          gradient: AppColors.promo1,
-                          title: name,
-                          subtitle: 'Genuine meds in 1 hour + doctors on demand',
-                          cta: 'Explore',
-                          onTap: () => _openShop(context),
-                        ),
-                        const SizedBox(width: 12),
-                        PromoCard(
-                          gradient: AppColors.promo2,
-                          title: 'Free delivery in 1 hour',
-                          subtitle: 'On orders of 3 items or more',
-                          cta: 'Shop now',
-                          onTap: () => _openShop(context),
-                        ),
-                        const SizedBox(width: 12),
-                        PromoCard(
-                          gradient: AppColors.promo3,
-                          title: 'Your prescriptions,\ndelivered',
-                          subtitle: 'Doctor sends your Rx straight to the app',
-                          cta: 'My Rx',
-                          onTap: () => Navigator.pushNamed(context, Routes.myRx),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              const SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.only(top: 9, bottom: 2),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      _Dot(on: true),
-                      SizedBox(width: 5),
-                      _Dot(on: false),
-                      SizedBox(width: 5),
-                      _Dot(on: false),
-                    ],
-                  ),
-                ),
-              ),
+              // .carousel — real per-store banners (confirmed live,
+              // 2026-09-17: GET /app/seller/{id}/banners), replacing what
+              // used to be 3 entirely hardcoded cards — the same "Free
+              // delivery in 1 hour"/"Your prescriptions, delivered" copy on
+              // literally every seller's page, with zero backend control.
+              // Shows nothing at all if this store has no banners
+              // configured, rather than falling back to those old fake ones.
+              if (vm.banners.isNotEmpty) SliverToBoxAdapter(child: _SellerBannerCarousel(banners: vm.banners, store: store)),
 
               // .sec "Shop by category" + .catgrid — matches rStore(): the
               // category grid is the first section after the carousel, and
               // its header always renders (an empty catgrid just renders
               // nothing, same as the HTML's empty div when a store has no
               // categorised products).
-              SliverToBoxAdapter(child: SectionHeader(title: 'Shop by category', actionLabel: 'See all', onAction: () => _openShop(context))),
+              SliverToBoxAdapter(child: SectionHeader(title: t('Shop by category', 'تسوق حسب الفئة'), actionLabel: t('See all', 'عرض الكل'), onAction: () => _openShop(context))),
               if (vm.isLoading)
                 const SliverToBoxAdapter(
                   child: Padding(padding: EdgeInsets.symmetric(vertical: 34), child: Center(child: CircularProgressIndicator())),
@@ -238,20 +200,20 @@ class _StoreBody extends StatelessWidget {
               // (which just calls the same unfiltered storeAll() as every
               // other section) — passes offersOnly so Shop opens already
               // narrowed to this store's actual offers, per client request.
-              SliverToBoxAdapter(child: SectionHeader(title: 'Special offers', actionLabel: 'See all', onAction: () => _openShop(context, offersOnly: true))),
+              SliverToBoxAdapter(child: SectionHeader(title: t('Special offers', 'عروض خاصة'), actionLabel: t('See all', 'عرض الكل'), onAction: () => _openShop(context, offersOnly: true))),
               _ProductRail(products: vm.offers, onTapProduct: (p) => Navigator.pushNamed(context, Routes.product, arguments: p.id)),
 
               // .sec "Best sellers" + .rail — same divergence as Special
               // offers above: See all passes bestSellersOnly instead of
               // opening the unfiltered catalogue.
-              SliverToBoxAdapter(child: SectionHeader(title: 'Best sellers', actionLabel: 'See all', onAction: () => _openShop(context, bestSellersOnly: true))),
+              SliverToBoxAdapter(child: SectionHeader(title: t('Best sellers', 'الأكثر مبيعاً'), actionLabel: t('See all', 'عرض الكل'), onAction: () => _openShop(context, bestSellersOnly: true))),
               _ProductRail(products: vm.bestSellers, onTapProduct: (p) => Navigator.pushNamed(context, Routes.product, arguments: p.id)),
 
               // .sec "Top brands" + .brand-rail
               SliverToBoxAdapter(
                 child: SectionHeader(
-                  title: 'Top brands',
-                  actionLabel: 'See all',
+                  title: t('Top brands', 'أفضل العلامات التجارية'),
+                  actionLabel: t('See all', 'عرض الكل'),
                   // Push directly (rather than the named Routes.brands route)
                   // so we can hand BrandsScreen this store's real,
                   // server-scoped brand list — see BrandsScreen for why that
@@ -264,9 +226,9 @@ class _StoreBody extends StatelessWidget {
               ),
               SliverToBoxAdapter(
                 child: vm.brandsInStore.isEmpty
-                    ? const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16),
-                  child: Text('No results', style: TextStyle(color: AppColors.muted, fontSize: 13)),
+                    ? Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(t('No results', 'لا توجد نتائج'), style: const TextStyle(color: AppColors.muted, fontSize: 13)),
                 )
                     : SizedBox(
                   height: 62,
@@ -275,16 +237,37 @@ class _StoreBody extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     itemCount: vm.brandsInStore.length,
                     separatorBuilder: (_, __) => const SizedBox(width: 10),
-                    itemBuilder: (context, i) => GestureDetector(
-                      onTap: () => _openShop(context, brand: vm.brandsInStore[i]),
-                      child: Container(
-                        constraints: const BoxConstraints(minWidth: 92),
-                        padding: const EdgeInsets.symmetric(horizontal: 14),
-                        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(13), boxShadow: AppColors.shSm),
-                        alignment: Alignment.center,
-                        child: Text(vm.brandsInStore[i], maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 13)),
-                      ),
-                    ),
+                    itemBuilder: (context, i) {
+                      final name = vm.brandsInStore[i];
+                      final logo = vm.brandLogosInStore[name];
+                      return GestureDetector(
+                        onTap: () => _openShop(context, brand: name),
+                        child: Container(
+                          constraints: const BoxConstraints(minWidth: 92),
+                          padding: EdgeInsets.symmetric(horizontal: logo != null ? 10 : 14),
+                          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(13), boxShadow: AppColors.shSm),
+                          alignment: Alignment.center,
+                          child: logo != null
+                              ? Row(mainAxisSize: MainAxisSize.min, children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: _BrandLogo(
+                                      url: logo,
+                                      size: 34,
+                                      // Falls back to the plain text-only look
+                                      // (no logo) if the URL fails to load —
+                                      // wrong format, bad file, network error
+                                      // — rather than a broken-image icon.
+                                      fallback: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 13)),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Flexible(child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 13))),
+                                ])
+                              : Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 13)),
+                        ),
+                      );
+                    },
                   ),
                 ),
               ),
@@ -292,12 +275,219 @@ class _StoreBody extends StatelessWidget {
               const SliverToBoxAdapter(child: SizedBox(height: 90)),
             ],
           ),
-          // storeMinbar() — pinned to the bottom
+          // storeMinbar() — pinned to the bottom, sits just above the tab
+          // bar below (Scaffold reserves that space automatically).
           Positioned(left: 0, right: 0, bottom: 0, child: _StoreMinbar(cart: cart)),
+        ],
+      ),
+      // Store used to have no bottom nav at all — the same 4-tab
+      // Home/Shop/Wishlist/Account bar RootShell shows, but Store isn't
+      // one of those 4 tabs (it's pushed on top of RootShell), so tapping
+      // one here pops back to RootShell and switches its tab — see
+      // AppBottomNav's `embedded: false` doc.
+      bottomNavigationBar: const AppBottomNav(embedded: false),
+      ),
+    );
+  }
+}
+
+/// A real brand_logo (confirmed live, 2026-09-16) came back as a `.svg`
+/// file — Image.network can't decode SVG at all (it only understands
+/// raster formats: PNG/JPG/WebP/etc.), so it would have silently failed
+/// and always fallen through to errorBuilder, never actually showing a
+/// logo despite one genuinely being there. Picks the right renderer by the
+/// URL's own extension rather than assuming every brand's logo is the same
+/// format — backend may not be consistent about it across brands.
+class _BrandLogo extends StatelessWidget {
+  final String url;
+  final double size;
+  final Widget fallback;
+  const _BrandLogo({required this.url, required this.size, required this.fallback});
+
+  @override
+  Widget build(BuildContext context) {
+    final path = Uri.tryParse(url)?.path.toLowerCase() ?? url.toLowerCase();
+    if (path.endsWith('.svg')) {
+      return SvgPicture.network(
+        url,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        placeholderBuilder: (_) => SizedBox(width: size, height: size),
+        errorBuilder: (_, __, ___) => fallback,
+      );
+    }
+    return Image.network(
+      url,
+      width: size,
+      height: size,
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => fallback,
+    );
+  }
+}
+
+/// Mirrors Home's own `_BannerCarousel`/`_BannerCard` (real API-driven
+/// banners there too) — same page-tracked dots, adapted for
+/// SellerBanner's different shape (`link_type`/`link_id` instead of a
+/// plain URL string).
+class _SellerBannerCarousel extends StatefulWidget {
+  final List<SellerBanner> banners;
+  final PharmacyStore store;
+  const _SellerBannerCarousel({required this.banners, required this.store});
+
+  @override
+  State<_SellerBannerCarousel> createState() => _SellerBannerCarouselState();
+}
+
+class _SellerBannerCarouselState extends State<_SellerBannerCarousel> {
+  final _controller = PageController(viewportFraction: .92);
+  int _page = 0;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        children: [
+          SizedBox(
+            height: 188,
+            child: PageView.builder(
+              controller: _controller,
+              padEnds: false,
+              onPageChanged: (i) => setState(() => _page = i),
+              itemCount: widget.banners.length,
+              itemBuilder: (context, i) {
+                final banner = widget.banners[i];
+                return Padding(
+                  padding: EdgeInsets.only(left: i == 0 ? 16 : 6, right: i == widget.banners.length - 1 ? 16 : 6),
+                  child: _SellerBannerCard(banner: banner, store: widget.store),
+                );
+              },
+            ),
+          ),
+          if (widget.banners.length > 1)
+            Padding(
+              padding: const EdgeInsets.only(top: 9, bottom: 2),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  for (var i = 0; i < widget.banners.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 5),
+                    _Dot(on: i == _page),
+                  ],
+                ],
+              ),
+            ),
         ],
       ),
     );
   }
+}
+
+/// Renders one real `SellerBanner`. Title/description/button all only show
+/// when actually present/enabled, same principle as Home's `_BannerCard` —
+/// a banner can be pure image with `button_show: false`, and description
+/// is skipped when it's just a duplicate of the title (confirmed live: a
+/// real banner had `title`/`description` both set to the exact same
+/// string, "Pharmacline Pharmacy" — showing that twice would just look
+/// like a mistake, not real content).
+class _SellerBannerCard extends StatelessWidget {
+  final SellerBanner banner;
+  final PharmacyStore store;
+  const _SellerBannerCard({required this.banner, required this.store});
+
+  @override
+  Widget build(BuildContext context) {
+    final showDescription = banner.description.isNotEmpty && banner.description != banner.title;
+    final showButton = banner.buttonShow && banner.buttonText.isNotEmpty;
+    final hasText = banner.title.isNotEmpty || showDescription || showButton;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(AppRadius.card),
+      child: GestureDetector(
+        onTap: showButton ? () => _openSellerBannerDestination(context, banner, store) : null,
+        child: Container(
+          decoration: BoxDecoration(color: AppColors.blush, boxShadow: AppColors.shSm),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (banner.image.isNotEmpty)
+                Image.network(
+                  banner.image,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(color: AppColors.blush),
+                ),
+              if (hasText)
+                const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Color(0xCC0B2A4A), Colors.transparent],
+                      begin: Alignment.bottomCenter,
+                      end: Alignment.topCenter,
+                    ),
+                  ),
+                ),
+              if (hasText)
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (banner.title.isNotEmpty)
+                        Text(
+                          banner.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700, height: 1.2),
+                        ),
+                      if (showDescription) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          banner.description,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: Colors.white.withOpacity(.92), fontSize: 12, height: 1.25),
+                        ),
+                      ],
+                      if (showButton) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
+                          child: Text(banner.buttonText, style: const TextStyle(color: AppColors.navy, fontWeight: FontWeight.w700, fontSize: 12)),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Only `link_type: "none"` has been seen in a real response so far — for
+/// that AND any other not-yet-confirmed value, falls back to opening this
+/// banner's own store's Shop listing (a reasonable destination for a
+/// button on that store's own banner, not a guess at an unrelated one),
+/// rather than doing nothing or inventing a mapping for link types that
+/// haven't actually been confirmed yet.
+void _openSellerBannerDestination(BuildContext context, SellerBanner banner, PharmacyStore store) {
+  Navigator.push(
+    context,
+    MaterialPageRoute(builder: (_) => ShopScreen(initialFilter: ShopFilter(pharmacy: store.seller, shopId: store.id))),
+  );
 }
 
 class _Dot extends StatelessWidget {
@@ -323,6 +513,7 @@ class _StoreMinbar extends StatelessWidget {
   Widget build(BuildContext context) {
     final count = cart.cartCount;
     final hasItems = count > 0;
+    final ar = context.watch<LocaleState>().isArabic;
     // .minbar — always white; only the text/icon color switches to navy
     // when it's tappable (.minbar.go), never the background.
     final textColor = hasItems ? AppColors.navy : AppColors.ink;
@@ -341,7 +532,7 @@ class _StoreMinbar extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                hasItems ? 'View cart ($count)' : 'Start adding KWD 1.000 to place your order!',
+                hasItems ? (ar ? 'عرض السلة ($count)' : 'View cart ($count)') : (ar ? 'ابدأ بإضافة 1.000 د.ك لتقديم طلبك!' : 'Start adding KWD 1.000 to place your order!'),
                 style: TextStyle(color: textColor, fontWeight: FontWeight.w600, fontSize: 14),
               ),
             ),
@@ -365,10 +556,11 @@ class _ProductRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (products.isEmpty) {
-      return const SliverToBoxAdapter(
+      final ar = context.watch<LocaleState>().isArabic;
+      return SliverToBoxAdapter(
         child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16),
-          child: Text('No results', style: TextStyle(color: AppColors.muted, fontSize: 13)),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Text(ar ? 'لا توجد نتائج' : 'No results', style: const TextStyle(color: AppColors.muted, fontSize: 13)),
         ),
       );
     }

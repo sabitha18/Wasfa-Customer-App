@@ -31,6 +31,17 @@ class Address {
   /// Optional delivery note for this address (confirmed live as `note`,
   /// can be `null`).
   String note;
+  /// The REAL delivery fee for this specific address — confirmed live on
+  /// checkout-init's `addresses[]` (2026-09-17): `delivery_charge`. Not yet
+  /// independently confirmed on the standalone `GET /acct/addresses` list
+  /// (the endpoint that actually populates addresses BEFORE checkout is
+  /// ever opened — e.g. on the Cart screen) — get a real response from
+  /// that endpoint to confirm this field is there too; if it isn't, this
+  /// stays null for every address until checkout-init has run at least
+  /// once this session. Null (not 0) when absent, so callers can tell
+  /// "confirmed free" apart from "not known yet" and show a loading state
+  /// instead of guessing, per CartState.pharmacyFee's doc.
+  final double? deliveryCharge;
 
   Address({
     this.id,
@@ -51,6 +62,7 @@ class Address {
     this.floor = '',
     this.isDefault = false,
     this.note = '',
+    this.deliveryCharge,
   });
 
   String get formatted => [

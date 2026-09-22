@@ -6,6 +6,7 @@ import '../../core/utils/formatters.dart';
 import '../../core/widgets/async_state_view.dart';
 import '../../data/models/cart_line.dart';
 import '../../data/repositories/catalog_repository.dart';
+import '../../state/address_state.dart';
 import '../../state/auth_state.dart';
 import '../../state/cart_state.dart';
 import '../../state/locale_state.dart';
@@ -39,15 +40,19 @@ class _CartScreenState extends State<CartScreen> {
     final cart = context.watch<CartState>();
     final store = cart.activeStore;
     final isRx = cart.cartTab == 'rx';
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
     // Rx groups by prescription (its own subtotal + its own Checkout
     // button — confirmed against the reference web app), not by pharmacy
     // like the regular cart does.
     final groups = isRx ? cart.rxGroupsFor() : cart.groupsFor(store);
     final keys = groups.keys.toList();
 
-    return Scaffold(
+    return Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: PageHeader(title: 'Cart'),
+      appBar: PageHeader(title: t('Cart', 'السلة')),
       body: Column(
         children: [
           // ── .carttabs — equal-width pills ──
@@ -55,9 +60,9 @@ class _CartScreenState extends State<CartScreen> {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
             child: Row(
               children: [
-                Expanded(child: _Tab(label: 'My Cart (${cart.cartCount})', on: cart.cartTab == 'my', onTap: () => cart.setCartTab('my'))),
+                Expanded(child: _Tab(label: '${t("My Cart", "سلتي")} (${cart.cartCount})', on: cart.cartTab == 'my', onTap: () => cart.setCartTab('my'))),
                 const SizedBox(width: 8),
-                Expanded(child: _Tab(label: 'Rx Cart (${cart.rxCartCount})', on: cart.cartTab == 'rx', onTap: () => cart.setCartTab('rx'))),
+                Expanded(child: _Tab(label: '${t("Rx Cart", "سلة الوصفات")} (${cart.rxCartCount})', on: cart.cartTab == 'rx', onTap: () => cart.setCartTab('rx'))),
               ],
             ),
           ),
@@ -66,7 +71,7 @@ class _CartScreenState extends State<CartScreen> {
             // loading state here instead of the empty-cart illustration,
             // which would otherwise flash "Your cart is empty" for a beat
             // before real data arrives, even for a cart that isn't empty.
-            const Expanded(child: LoadingView(message: 'Loading your cart…'))
+            Expanded(child: LoadingView(message: t('Loading your cart…', 'جارٍ تحميل سلتك…')))
           else if (keys.isEmpty)
             Expanded(
               child: Center(
@@ -83,10 +88,10 @@ class _CartScreenState extends State<CartScreen> {
                         child: Icon(isRx ? Icons.medication_liquid_rounded : Icons.shopping_bag_outlined, size: 40, color: AppColors.sky),
                       ),
                       const SizedBox(height: 20),
-                      Text(isRx ? 'My Rx' : 'Your cart is empty', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.navy)),
+                      Text(isRx ? t('My Rx', 'وصفاتي الطبية') : t('Your cart is empty', 'سلتك فارغة'), style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.navy)),
                       const SizedBox(height: 6),
                       Text(
-                        isRx ? 'Prescriptions your doctor sends appear in My Rx.' : 'Add products to get started.',
+                        isRx ? t('Prescriptions your doctor sends appear in My Rx.', 'تظهر الوصفات التي يرسلها طبيبك في صفحة وصفاتي الطبية.') : t('Add products to get started.', 'أضف منتجات للبدء.'),
                         textAlign: TextAlign.center,
                         style: const TextStyle(color: AppColors.muted, fontSize: 13),
                       ),
@@ -100,7 +105,7 @@ class _CartScreenState extends State<CartScreen> {
                           elevation: 0,
                         ),
                         onPressed: () => Navigator.pushNamed(context, isRx ? Routes.myRx : Routes.shop),
-                        child: Text(isRx ? 'My Rx →' : 'Start shopping', style: const TextStyle(fontWeight: FontWeight.w700)),
+                        child: Text(isRx ? t('My Rx →', '← وصفاتي الطبية') : t('Start shopping', 'ابدأ التسوق'), style: const TextStyle(fontWeight: FontWeight.w700)),
                       ),
                     ],
                   ),
@@ -122,7 +127,7 @@ class _CartScreenState extends State<CartScreen> {
                         children: [
                           const SizedBox(width: 13, height: 13, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.sky)),
                           const SizedBox(width: 8),
-                          Text(isRx ? 'Syncing your Rx cart…' : 'Syncing your cart…', style: const TextStyle(fontSize: 11.5, color: AppColors.muted)),
+                          Text(isRx ? t('Syncing your Rx cart…', 'جارٍ مزامنة سلة الوصفات…') : t('Syncing your cart…', 'جارٍ مزامنة سلتك…'), style: const TextStyle(fontSize: 11.5, color: AppColors.muted)),
                         ],
                       ),
                     ),
@@ -137,9 +142,9 @@ class _CartScreenState extends State<CartScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text('Deliver together', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.navy)),
+                              Text(t('Deliver together', 'التوصيل معاً'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.navy)),
                               const SizedBox(height: 2),
-                              Text('One delivery fee for all pharmacies · ${Formatters.money(CartState.togetherDeliveryFee)}', style: const TextStyle(fontSize: 11, color: AppColors.muted)),
+                              Text('${t("One delivery fee for all pharmacies", "رسوم توصيل واحدة لجميع الصيدليات")} · ${Formatters.money(CartState.togetherDeliveryFee)}', style: const TextStyle(fontSize: 11, color: AppColors.muted)),
                             ],
                           ),
                         ),
@@ -159,7 +164,19 @@ class _CartScreenState extends State<CartScreen> {
       bottomNavigationBar: (keys.isEmpty || isRx)
           ? null
           : Builder(builder: (context) {
+              final addressState = context.watch<AddressState>();
               final totals = cart.computeTotals();
+              // The one real, server-computed delivery fee — see
+              // AddressState.currentDeliveryCharge's doc for why this (not
+              // any local computation, "smarter" area-based or otherwise)
+              // is the only source this ever reads. `totals.deliveryFee`
+              // itself is still computed internally by CartState (other
+              // callers still need `totals.groups`/`.subtotal` etc.), but
+              // its OWN fee value is deliberately never used for display
+              // here — swapped out for the real one below instead of
+              // trusting whatever CartState guessed internally.
+              final deliveryCharge = addressState.currentDeliveryCharge;
+              final realTotal = deliveryCharge == null ? null : totals.total - totals.deliveryFee + deliveryCharge.effectiveCharge;
               final isArabic = context.watch<LocaleState>().isArabic;
               return Container(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
@@ -183,7 +200,9 @@ class _CartScreenState extends State<CartScreen> {
                           children: [
                             Expanded(
                               child: Text(
-                                '🏷️ ${totals.promo!.code} applied · ${totals.promo!.label(isArabic)}',
+                                isArabic
+                                    ? '🏷️ ${totals.promo!.code} مُطبّق · ${totals.promo!.label(isArabic)}'
+                                    : '🏷️ ${totals.promo!.code} applied · ${totals.promo!.label(isArabic)}',
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: AppColors.sky),
                               ),
@@ -203,13 +222,16 @@ class _CartScreenState extends State<CartScreen> {
                           elevation: 0,
                         ),
                         onPressed: () => Navigator.pushNamed(context, Routes.checkout),
-                        child: Text('Checkout · ${Formatters.money(totals.total)}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                        child: realTotal == null
+                            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white))
+                            : Text('${isArabic ? "إتمام الطلب" : "Checkout"} · ${Formatters.money(realTotal)}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                       ),
                     ),
                   ],
                 ),
               );
             }),
+      ),
     );
   }
 }
@@ -248,6 +270,7 @@ class _RxPrescriptionGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ar = context.watch<LocaleState>().isArabic;
     final sub = items.fold(0.0, (s, l) => s + cart.lineCharge(l));
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -259,12 +282,12 @@ class _RxPrescriptionGroup extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
               Expanded(
-                child: Text('℞ Prescription #$rxId', overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 12.5)),
+                child: Text('℞ ${ar ? "وصفة" : "Prescription"} #$rxId', overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 12.5)),
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(color: AppColors.rose, borderRadius: BorderRadius.circular(20)),
-                child: const Text('Rx Required', style: TextStyle(color: Colors.white, fontSize: 9.5, fontWeight: FontWeight.w700)),
+                child: Text(ar ? 'تتطلب وصفة' : 'Rx Required', style: const TextStyle(color: Colors.white, fontSize: 9.5, fontWeight: FontWeight.w700)),
               ),
             ]),
           ),
@@ -292,10 +315,10 @@ class _RxPrescriptionGroup extends StatelessWidget {
                   elevation: 0,
                 ),
                 onPressed: () => Navigator.pushNamed(context, Routes.checkout, arguments: rxId),
-                child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                  Text('Checkout', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                  SizedBox(width: 6),
-                  Icon(Icons.arrow_forward, size: 15),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text(ar ? 'إتمام الطلب' : 'Checkout', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                  const SizedBox(width: 6),
+                  Icon(ar ? Icons.arrow_back : Icons.arrow_forward, size: 15),
                 ]),
               ),
             ]),
@@ -315,8 +338,24 @@ class _PharmacyGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final sub = cart.groupSubtotal(items);
-    final fee = cart.pharmacyFee(sub);
+    final ar = context.watch<LocaleState>().isArabic;
+    // Was `cart.pharmacyFee(cart.groupSubtotal(items))` called with no area context at all —
+    // the one spot left still falling straight through to the old fake
+    // flat rule (`sub >= 3 ? 0 : 0.750`) after everywhere else was fixed
+    // to use the real per-address delivery-charge endpoint. Confirmed
+    // live in a real screenshot: this header showed "KWD 0.750" while the
+    // bottom Checkout button correctly showed a total that EXCLUDED that
+    // 0.750 — the two numbers didn't even agree with each other, both
+    // supposedly describing the same cart.
+    //
+    // Real caveat worth knowing: the delivery-charge endpoint returns ONE
+    // fee for the delivery address/area as a whole, with no per-pharmacy
+    // breakdown — so with more than one pharmacy in the cart, every group
+    // shows this SAME real number rather than each having its own
+    // separately-confirmed fee. That's still real data, just not
+    // necessarily a true per-pharmacy split; ask backend if a genuine
+    // per-pharmacy fee is supposed to exist if that turns out to matter.
+    final deliveryCharge = context.watch<AddressState>().currentDeliveryCharge;
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       clipBehavior: Clip.antiAlias,
@@ -330,7 +369,11 @@ class _PharmacyGroup extends StatelessWidget {
             child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
               Text(isRx ? '℞ $pharmacy' : '🏪 $pharmacy', style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 12.5)),
               Text(
-                cart.deliverTogether ? '' : (fee == 0 ? '🚚 Free' : Formatters.money(fee)),
+                cart.deliverTogether
+                    ? ''
+                    : (deliveryCharge == null
+                        ? '' // still loading — blank rather than a guessed number
+                        : (deliveryCharge.effectiveCharge == 0 ? '🚚 ${ar ? "مجاني" : "Free"}' : Formatters.money(deliveryCharge.effectiveCharge))),
                 style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.ok),
               ),
             ]),
@@ -350,8 +393,9 @@ class _CartLineTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ar = context.watch<LocaleState>().isArabic;
     final product = line.productId != null ? CatalogRepository.instance.findProduct(line.productId!) : null;
-    final name = line.nameOverride ?? product?.nameEn ?? 'Item';
+    final name = line.nameOverride ?? product?.nameEn ?? (ar ? 'منتج' : 'Item');
     // Straight off the cart line itself (confirmed live `image` field on
     // /app/cart, 2026-07-29) — not the CatalogRepository lookup above,
     // which comes up null for most real cart lines since a server-synced
@@ -419,7 +463,7 @@ class _CartLineTile extends StatelessWidget {
                       style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, height: 1.3, color: AppColors.ink)),
                   const SizedBox(height: 1),
                   Text(
-                    (product?.brand ?? (line.rxId ?? 'Rx')).toUpperCase(),
+                    (product?.brand ?? (line.rxId ?? (ar ? 'وصفة' : 'Rx'))).toUpperCase(),
                     style: const TextStyle(fontSize: 10, color: AppColors.sky, fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 4),
@@ -436,7 +480,7 @@ class _CartLineTile extends StatelessWidget {
                     Padding(
                       padding: const EdgeInsets.only(top: 3),
                       child: Text(
-                        '🎁 $bogoLabel · $freeQty free',
+                        ar ? '🎁 $bogoLabel · $freeQty مجاناً' : '🎁 $bogoLabel · $freeQty free',
                         style: const TextStyle(fontSize: 11, color: AppColors.ok, fontWeight: FontWeight.w700),
                       ),
                     ),
@@ -460,7 +504,7 @@ class _CartLineTile extends StatelessWidget {
                     Padding(
                       padding: const EdgeInsets.only(top: 3),
                       child: Text(
-                        'Out of stock',
+                        ar ? 'غير متوفر' : 'Out of stock',
                         style: const TextStyle(fontSize: 11, color: AppColors.rose, fontWeight: FontWeight.w700),
                       ),
                     ),

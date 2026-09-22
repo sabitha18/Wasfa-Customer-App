@@ -8,6 +8,7 @@ import '../../data/models/server_notification.dart';
 import '../../data/services/account_service.dart';
 import '../../data/services/notification_history_store.dart';
 import '../../state/auth_state.dart';
+import '../../state/locale_state.dart';
 import '../widgets/page_header.dart';
 
 /// The "notification listing page" opened from the bell icon in the app
@@ -53,11 +54,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Future<void> _load() async {
+    final ar = context.read<LocaleState>().isArabic;
     final auth = context.read<AuthState>();
     if (!auth.isSignedIn) {
       setState(() {
         _loading = false;
-        _error = 'Please sign in to see your notifications.';
+        _error = ar ? 'يرجى تسجيل الدخول لعرض إشعاراتك.' : 'Please sign in to see your notifications.';
       });
       return;
     }
@@ -112,12 +114,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  String _relativeTime(DateTime t) {
+  String _relativeTime(DateTime t, bool ar) {
     final diff = DateTime.now().difference(t);
-    if (diff.inMinutes < 1) return 'Just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    if (diff.inMinutes < 1) return ar ? 'الآن' : 'Just now';
+    if (diff.inMinutes < 60) return ar ? 'منذ ${diff.inMinutes} د' : '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return ar ? 'منذ ${diff.inHours} س' : '${diff.inHours}h ago';
+    if (diff.inDays < 7) return ar ? 'منذ ${diff.inDays} يوم' : '${diff.inDays}d ago';
     return '${t.day}/${t.month}/${t.year}';
   }
 
@@ -142,13 +144,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
+    return Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: const PageHeader(title: 'Notifications'),
+      appBar: PageHeader(title: t('Notifications', 'الإشعارات')),
       body: RefreshIndicator(
         onRefresh: _load,
         child: _loading
-            ? const LoadingView(message: 'Loading notifications…')
+            ? LoadingView(message: t('Loading notifications…', 'جارٍ تحميل الإشعارات…'))
             : (_error != null && _items.isEmpty)
                 ? ErrorRetryView(message: _error!, onRetry: _load)
                 : _items.isEmpty
@@ -162,7 +168,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                               children: [
                                 const Icon(Icons.notifications_none_rounded, size: 48, color: AppColors.muted),
                                 const SizedBox(height: 12),
-                                const Text('No notifications yet', style: TextStyle(color: AppColors.muted, fontSize: 13.5)),
+                                Text(t('No notifications yet', 'لا توجد إشعارات بعد'), style: const TextStyle(color: AppColors.muted, fontSize: 13.5)),
                               ],
                             ),
                           ),
@@ -208,7 +214,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                                         const SizedBox(height: 3),
                                         Text(n.body, style: const TextStyle(fontSize: 12.5, color: AppColors.ink)),
                                         const SizedBox(height: 6),
-                                        Text(_relativeTime(n.date), style: const TextStyle(fontSize: 11, color: AppColors.muted)),
+                                        Text(_relativeTime(n.date, ar), style: const TextStyle(fontSize: 11, color: AppColors.muted)),
                                       ],
                                     ),
                                   ),
@@ -218,6 +224,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           );
                         },
                       ),
+      ),
       ),
     );
   }

@@ -13,6 +13,7 @@ import '../../state/address_state.dart';
 import '../../state/app_settings_state.dart';
 import '../../state/auth_state.dart';
 import '../../state/cart_state.dart';
+import '../../state/locale_state.dart';
 import '../../state/location_state.dart';
 import '../../state/orders_state.dart';
 import '../../viewmodels/checkout_view_model.dart';
@@ -38,6 +39,25 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   CheckoutInitData? _initData;
   bool _initLoading = true;
   String? _initError;
+  // Checkout used to silently trust whatever AddressState.effectiveAddress
+  // already resolved to — GPS-based "Current location" by default, or a
+  // guessed "default"/first saved address if GPS failed — with someone's
+  // 2nd/3rd saved address never getting picked unless they'd deliberately
+  // gone into "Delivery addresses" and chosen it themselves at some earlier
+  // point. Whoever's placing THIS order deserves an explicit chance to
+  // confirm which of their saved addresses it's actually going to, once per
+  // visit to this screen — not a silent guess. Only fires when there's
+  // genuinely more than one saved address to choose between; a single
+  // saved address (or none) has nothing meaningful to ask about.
+  bool _askedAddress = false;
+  // Tracks what the last checkout-init fetch was actually FOR, so a
+  // real address/area change (see _onAddressChanged) triggers a genuine
+  // re-fetch — now that address_id/area_id are real params (confirmed
+  // live 2026-09-18), the whole summary (not just delivery fee) depends
+  // on which one is selected, so switching needs a fresh fetch, not just
+  // a locally-patched number the way this used to work around it.
+  int? _lastAddressId;
+  int? _lastAreaId;
 
   @override
   void initState() {
@@ -50,14 +70,52 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       // loaded, so "Current location" (the default) carries a real
       // governorate/area, not just a display label.
       addressState.syncFromLocation(governorate: location.governorate, area: location.area, street: location.street);
+      addressState.addListener(_onAddressChanged);
       final auth = context.read<AuthState>();
       if (auth.isSignedIn) {
-        addressState.loadAddresses(auth.userId!);
+        // Was fire-and-forget (`loadAddresses(...)` with no `await`),
+        // immediately followed by capturing `_lastAddressId`/`_lastAreaId`
+        // from whatever `effectiveAddress` was BEFORE the real address
+        // list had actually loaded. The moment that fetch DID complete
+        // moments later, it notified — `_onAddressChanged` saw a real
+        // change (the snapshot was stale) and fired a second
+        // `_loadCheckoutInit`, running the promo auto-apply logic twice
+        // in a row (confirmed live: the exact same `/app/promotion/apply`
+        // call, twice, in real logs). Awaiting it first means the
+        // snapshot below is already correct, so that second redundant
+        // fetch doesn't happen.
+        await addressState.loadAddresses(auth.userId!);
+        if (!mounted) return;
+        final a = addressState.effectiveAddress;
+        _lastAddressId = a?.id;
+        _lastAreaId = a?.areaId;
         _loadCheckoutInit(auth.userId!);
       } else {
         setState(() => _initLoading = false);
       }
     });
+  }
+
+  @override
+  void dispose() {
+    context.read<AddressState>().removeListener(_onAddressChanged);
+    super.dispose();
+  }
+
+  /// Re-fetches checkout-init whenever the SELECTED address/area actually
+  /// changes — switching a saved address, GPS resolving to a new one, etc.
+  /// (anything that changes what AddressState.effectiveAddress resolves
+  /// to). Guarded so it only re-fetches on a genuine change, not every
+  /// AddressState notification (it fires for plenty of unrelated reasons
+  /// too — e.g. its own delivery-charge refresh completing).
+  void _onAddressChanged() {
+    final addressState = context.read<AddressState>();
+    final a = addressState.effectiveAddress;
+    if (a?.id == _lastAddressId && a?.areaId == _lastAreaId) return;
+    _lastAddressId = a?.id;
+    _lastAreaId = a?.areaId;
+    final auth = context.read<AuthState>();
+    if (auth.isSignedIn) _loadCheckoutInit(auth.userId!);
   }
 
   /// `GET /app/checkout` — confirmed live, consolidates cart/addresses/
@@ -70,9 +128,58 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   Future<void> _loadCheckoutInit(int userId) async {
     setState(() => _initLoading = true);
     try {
-      final data = await AccountService.instance.checkoutInit(userId, prescriptionId: widget.rxScope);
+      final a = context.read<AddressState>().effectiveAddress;
+      var data = await AccountService.instance.checkoutInit(
+        userId,
+        prescriptionId: widget.rxScope,
+        addressId: a?.id,
+        areaId: a?.areaId,
+      );
       if (!mounted) return;
-      context.read<AddressState>().hydrateAddresses(data.addresses);
+      // Auto-apply the best qualifying promotion that doesn't need a typed
+      // code (Promotion.requiresCode == false — e.g. a straight "20% off"
+      // or a "min 3 items" offer the cart already qualifies for), so it
+      // shows applied on the order immediately rather than requiring the
+      // person to open the promo sheet and tap it themselves. A promotion
+      // that DOES require a code is never auto-applied — typing/choosing a
+      // specific code is something the person does on purpose. Only runs
+      // when nothing's already applied, so it can never override a choice
+      // already made this session (including having removed an offer on
+      // purpose earlier).
+      if (data.appliedPromo == null && data.appliedCouponCode == null) {
+        final candidates = data.promotions.where((p) => p.isActive && !p.requiresCode).toList()
+          ..sort((a, b) => b.discount.compareTo(a.discount));
+        if (candidates.isNotEmpty && mounted) {
+          try {
+            final areaId = context.read<AddressState>().effectiveAddress?.areaId;
+            final result = await AccountService.instance.applyPromotion(
+              userId, candidates.first.id,
+              subtotal: data.summary.subtotal,
+              itemCount: data.itemCount,
+              areaId: areaId,
+            );
+            if (result.success) {
+              // Was missing addressId/areaId here — unlike the initial
+              // fetch just above, which correctly passes them. Confirmed
+              // real-world effect: this refetch would fall back to
+              // whatever address the SERVER considers the account's
+              // default, which can genuinely differ from the one actually
+              // in use — so even after a successful apply, this could come
+              // back showing the promo as NOT applied (or the wrong
+              // delivery fee) simply because it asked about a different
+              // address's checkout state, not because the apply itself
+              // failed.
+              data = await AccountService.instance.checkoutInit(userId, prescriptionId: widget.rxScope, addressId: a?.id, areaId: a?.areaId);
+            }
+          } catch (_) {
+            // Silent — checkout still works without the auto-applied offer;
+            // the person can still open the promo sheet and apply it by hand.
+          }
+        }
+      }
+      if (!mounted) return;
+      final addressState = context.read<AddressState>();
+      addressState.hydrateAddresses(data.addresses);
       context.read<AppSettingsState>().applyFromCheckout(data.paymentMethods.enabledKeys);
       context.read<OrdersState>().syncWalletBalance(data.walletBalance);
       setState(() {
@@ -80,6 +187,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         _initLoading = false;
         _initError = null;
       });
+      // Ask once per visit to this screen which address this order should
+      // actually go to, when there's genuinely more than one saved address
+      // to choose between — see _askedAddress's doc for why silently
+      // trusting whatever was already active (GPS, or a guessed default)
+      // isn't good enough for the address an order actually ships to.
+      if (!_askedAddress && addressState.addresses.length > 1) {
+        _askedAddress = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) showAddressPickerSheet(context, addressState, context.read<LocationState>());
+        });
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -127,11 +245,17 @@ class _CheckoutBody extends StatelessWidget {
     final cart = context.watch<CartState>();
     final addressState = context.watch<AddressState>();
     final location = context.watch<LocationState>();
+    final ar = context.watch<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
     // Scoped to just this prescription's lines when rxScope is set (see its
     // doc) — null otherwise, meaning "use the whole active store" as before.
     final Map<String, CartLine>? rxScopeStore =
         (rxScope != null && cart.cartTab == 'rx') ? Map.fromEntries(cart.rxCart.entries.where((e) => e.value.rxId == rxScope)) : null;
-    final totals = cart.computeTotals(storeOverride: rxScopeStore);
+    final totals = cart.computeTotals(
+      storeOverride: rxScopeStore,
+      areaCatalog: addressState.areaCatalog,
+      areaId: addressState.effectiveAddress?.areaId,
+    );
     final a = addressState.effectiveAddress;
 
     // CheckoutScreen's initState only ever calls syncFromLocation ONCE, right
@@ -162,28 +286,30 @@ class _CheckoutBody extends StatelessWidget {
       });
     }
 
-    return Scaffold(
+    return Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: PageHeader(title: 'Checkout'),
+      appBar: PageHeader(title: t('Checkout', 'إتمام الطلب')),
       body: ListView(
         padding: const EdgeInsets.only(bottom: 120),
         children: [
           if (initError != null)
             // Non-blocking — checkout still works from local computation
             // while this failed, so this is a note, not a hard stop.
-            InlineErrorBanner(message: 'Some checkout details didn\'t load: $initError', onRetry: null)
+            InlineErrorBanner(message: t('Some checkout details didn\'t load: $initError', 'لم يتم تحميل بعض تفاصيل الطلب: $initError'), onRetry: null)
           else if (initLoading && initData == null)
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
               child: Row(children: [
-                SizedBox(width: 13, height: 13, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.sky)),
-                SizedBox(width: 8),
-                Text('Loading checkout details…', style: TextStyle(fontSize: 11.5, color: AppColors.muted)),
+                const SizedBox(width: 13, height: 13, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.sky)),
+                const SizedBox(width: 8),
+                Text(t('Loading checkout details…', 'جارٍ تحميل تفاصيل الطلب…'), style: const TextStyle(fontSize: 11.5, color: AppColors.muted)),
               ]),
             ),
           // ── .sec2 — "Shipping address" + edit icon ──
           _Sec2(
-            label: 'Shipping address',
+            label: t('Shipping address', 'عنوان التوصيل'),
             onEdit: a == null ? () => showAddressFormSheet(context, addressState, -1) : () => showAddressFormSheet(context, addressState, addressState.selectedIndex),
           ),
           Padding(
@@ -204,8 +330,8 @@ class _CheckoutBody extends StatelessWidget {
                       child: Row(children: [
                         const Icon(Icons.add_location_alt_outlined, size: 18, color: AppColors.rose),
                         const SizedBox(width: 10),
-                        const Expanded(
-                          child: Text('Add a delivery address to continue', style: TextStyle(color: AppColors.rose, fontWeight: FontWeight.w600, fontSize: 12.5)),
+                        Expanded(
+                          child: Text(t('Add a delivery address to continue', 'أضف عنوان توصيل للمتابعة'), style: const TextStyle(color: AppColors.rose, fontWeight: FontWeight.w600, fontSize: 12.5)),
                         ),
                         const Icon(Icons.chevron_right_rounded, color: AppColors.rose, size: 16),
                       ]),
@@ -227,10 +353,10 @@ class _CheckoutBody extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(a.formatted, style: const TextStyle(color: AppColors.muted, fontSize: 12, height: 1.4)),
                     const SizedBox(height: 9),
-                    const Row(children: [
-                      Text('Change address', style: TextStyle(color: AppColors.sky, fontWeight: FontWeight.w600, fontSize: 12)),
-                      SizedBox(width: 3),
-                      Icon(Icons.chevron_right_rounded, size: 14, color: AppColors.sky),
+                    Row(children: [
+                      Text(t('Change address', 'تغيير العنوان'), style: const TextStyle(color: AppColors.sky, fontWeight: FontWeight.w600, fontSize: 12)),
+                      const SizedBox(width: 3),
+                      const Icon(Icons.chevron_right_rounded, size: 14, color: AppColors.sky),
                     ]),
                   ],
                 ),
@@ -238,18 +364,18 @@ class _CheckoutBody extends StatelessWidget {
             ),
           ),
 
-          const _HLbl(label: 'Delivery date'),
+          _HLbl(label: t('Delivery date', 'تاريخ التوصيل')),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(children: [
-              _ChoiceChip(label: 'ASAP', on: vm.slot == 'asap', onTap: () => vm.setSlot('asap')),
+              _ChoiceChip(label: t('ASAP', 'في أقرب وقت'), on: vm.slot == 'asap', onTap: () => vm.setSlot('asap')),
               const SizedBox(width: 8),
-              _ChoiceChip(label: 'Scheduled', on: vm.slot == 'sched', onTap: () => vm.setSlot('sched')),
+              _ChoiceChip(label: t('Scheduled', 'مجدول'), on: vm.slot == 'sched', onTap: () => vm.setSlot('sched')),
             ]),
           ),
           if (vm.slot == 'sched') ...[
             _Calendar(vm: vm),
-            const _HLbl(label: 'Shipping method'),
+            _HLbl(label: t('Shipping method', 'طريقة التوصيل')),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Column(children: [
@@ -261,8 +387,8 @@ class _CheckoutBody extends StatelessWidget {
                   _PayOption(
                     icon: Icons.schedule_rounded,
                     label: initData!.deliverySlots[i].amount > 0
-                        ? '${initData!.deliverySlots[i].title} · ${Formatters.money(initData!.deliverySlots[i].amount)}'
-                        : initData!.deliverySlots[i].title,
+                        ? '${initData!.deliverySlots[i].titleFor(ar)} · ${Formatters.money(initData!.deliverySlots[i].amount)}'
+                        : initData!.deliverySlots[i].titleFor(ar),
                     on: vm.slotTimeIndex == i,
                     onTap: () => vm.setSlotTime(i),
                   ),
@@ -270,7 +396,7 @@ class _CheckoutBody extends StatelessWidget {
             ),
           ],
 
-          const _HLbl(label: 'Payment method'),
+          _HLbl(label: t('Payment method', 'طريقة الدفع')),
           Builder(builder: (context) {
             final settings = context.watch<AppSettingsState>();
             final enabled = settings.enabledPaymentMethods;
@@ -285,13 +411,13 @@ class _CheckoutBody extends StatelessWidget {
             Widget optionFor(String key) {
               switch (key) {
                 case 'knet':
-                  return _PayOption(icon: Icons.credit_card_rounded, label: 'KNET', on: vm.pay == 'knet', onTap: () => vm.setPay('knet'));
+                  return _PayOption(icon: Icons.credit_card_rounded, label: t('KNET', 'كي نت'), on: vm.pay == 'knet', onTap: () => vm.setPay('knet'));
                 case 'card':
-                  return _PayOption(icon: Icons.credit_card_rounded, label: 'Card', on: vm.pay == 'card', onTap: () => vm.setPay('card'));
+                  return _PayOption(icon: Icons.credit_card_rounded, label: t('Card', 'بطاقة'), on: vm.pay == 'card', onTap: () => vm.setPay('card'));
                 case 'wallet':
-                  return _PayOption(icon: Icons.account_balance_wallet_rounded, label: 'Wallet · ${Formatters.money(wallet)}', on: vm.pay == 'wallet', onTap: () => vm.setPay('wallet'));
+                  return _PayOption(icon: Icons.account_balance_wallet_rounded, label: '${t("Wallet", "المحفظة")} · ${Formatters.money(wallet)}', on: vm.pay == 'wallet', onTap: () => vm.setPay('wallet'));
                 case 'cod':
-                  return _PayOption(icon: Icons.payments_rounded, label: 'Cash on delivery', on: vm.pay == 'cod', onTap: () => vm.setPay('cod'));
+                  return _PayOption(icon: Icons.payments_rounded, label: t('Cash on delivery', 'الدفع عند الاستلام'), on: vm.pay == 'cod', onTap: () => vm.setPay('cod'));
                 default:
                   return const SizedBox.shrink();
               }
@@ -302,7 +428,7 @@ class _CheckoutBody extends StatelessWidget {
             );
           }),
 
-          const _HLbl(label: 'Additional notes'),
+          _HLbl(label: t('Additional notes', 'ملاحظات إضافية')),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: TextField(
@@ -314,7 +440,7 @@ class _CheckoutBody extends StatelessWidget {
                 filled: true,
                 fillColor: Colors.white,
                 contentPadding: const EdgeInsets.all(12),
-                hintText: 'Any note for the rider or pharmacy…',
+                hintText: t('Any note for the rider or pharmacy…', 'أي ملاحظة للسائق أو الصيدلية…'),
                 hintStyle: const TextStyle(color: AppColors.muted, fontSize: 14),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.line, width: 1.5)),
                 enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(11), borderSide: const BorderSide(color: AppColors.line, width: 1.5)),
@@ -325,12 +451,21 @@ class _CheckoutBody extends StatelessWidget {
           ),
           const SizedBox(height: 18),
 
-          const _HLbl(label: 'Promo code'),
+          _HLbl(label: t('Promo code', 'رمز الخصم')),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Builder(builder: (context) {
-              final appliedLabel = initData?.appliedCouponCode ?? initData?.appliedPromo?.promoCode;
-              final appliedTitle = initData?.appliedPromo?.title;
+              // Was `initData?.appliedPromo?.promoCode` — that field never
+              // existed on the real applied_promo shape at all (see
+              // AppliedPromo's doc), so this always silently evaluated to
+              // null for an auto-applied promotion, showing "Enter a promo
+              // code" here even while the Order Summary right below
+              // correctly showed the real discount applied. `label` here IS
+              // the complete display name for this case ("testpromo") —
+              // there's no separate secondary title to also show alongside
+              // it the way a coupon code + Promotion.title pairing might
+              // have had.
+              final appliedLabel = initData?.appliedCouponCode ?? initData?.appliedPromo?.label;
               final discount = initData?.summary.couponDiscount ?? 0;
               return GestureDetector(
                 onTap: () => _openPromoSheet(
@@ -353,11 +488,8 @@ class _CheckoutBody extends StatelessWidget {
                     const SizedBox(width: 10),
                     Expanded(
                       child: appliedLabel != null
-                          ? Text.rich(TextSpan(children: [
-                        TextSpan(text: '$appliedLabel ', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5, color: AppColors.ink)),
-                        if (appliedTitle != null) TextSpan(text: '· $appliedTitle', style: const TextStyle(color: AppColors.ink, fontSize: 12.5)),
-                      ]))
-                          : const Text('Enter a promo code', style: TextStyle(color: AppColors.ink, fontSize: 12.5)),
+                          ? Text(appliedLabel, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5, color: AppColors.ink))
+                          : Text(t('Enter a promo code', 'أدخل رمز خصم'), style: const TextStyle(color: AppColors.ink, fontSize: 12.5)),
                     ),
                     if (appliedLabel != null && discount > 0)
                       Text('−${Formatters.money(discount)}', style: const TextStyle(color: AppColors.rose, fontWeight: FontWeight.w700, fontSize: 13)),
@@ -369,46 +501,47 @@ class _CheckoutBody extends StatelessWidget {
             }),
           ),
 
-          const _HLbl(label: 'Order summary'),
+          _HLbl(label: t('Order summary', 'ملخص الطلب')),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Builder(builder: (context) {
-              // Prefers the server's own computed totals (confirmed live
-              // via checkout-init) once loaded — that reflects its actual
-              // promo/delivery-fee logic exactly, rather than the client
-              // trying to replicate it locally. Falls back to local
-              // computation only until that fetch completes (or if it
-              // fails), so the screen isn't blank in the meantime.
               final summary = initData?.summary;
-              final local = cart.computeTotals(storeOverride: rxScopeStore);
-              final subtotal = summary?.subtotal ?? local.before;
-              // Real per-area rate + free-delivery threshold (confirmed
-              // live `free_enabled`/`free_over`/each area's own `fee`) —
-              // NOT the old fallback here, which used to be
-              // CartState.pharmacyFee: a flat "free over 3 KWD, else 750
-              // fils" rule straight out of the HTML prototype, applied
-              // regardless of which area was actually selected. AreaCatalog
-              // already had the real per-area numbers this whole time
-              // (area_catalog.dart's feeFor), just never wired in anywhere.
-              final deliveryFee = summary?.deliveryFee ?? addressState.areaCatalog.feeFor(a?.areaId, subtotal);
-              final discount = summary?.discount ?? local.itemDiscount;
-              final couponDiscount = summary?.couponDiscount ?? local.promoDiscount;
-              final grandTotal = summary?.grandTotal ?? local.due;
-              final appliedLabel = initData?.appliedCouponCode ?? initData?.appliedPromo?.promoCode;
+              // checkout-init now takes address_id/area_id (confirmed live
+              // 2026-09-18) and returns a summary already correct for
+              // whichever address is actually selected — no more
+              // reconstructing the total from a separately-fetched
+              // per-address fee (see this Builder's own history/git blame
+              // for what used to be here instead, and
+              // AccountService.checkoutInit's doc for the full story).
+              if (summary == null) {
+                return Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: AppColors.shSm),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.sky)),
+                      const SizedBox(width: 10),
+                      Text(t('Loading order summary…', 'جارٍ تحميل ملخص الطلب…'), style: const TextStyle(fontSize: 12.5, color: AppColors.muted)),
+                    ],
+                  ),
+                );
+              }
+              final appliedLabel = initData?.appliedCouponCode ?? initData?.appliedPromo?.label;
               return Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: AppColors.shSm),
                 child: Column(
                   children: [
-                    _SumRow(label: 'Subtotal', value: Formatters.money(subtotal)),
-                    if (discount > 0) _SumRow(label: 'Discount', value: '−${Formatters.money(discount)}', color: AppColors.rose),
-                    _SumRow(label: 'Delivery fee', value: deliveryFee == 0 ? 'Free' : Formatters.money(deliveryFee)),
-                    if (couponDiscount > 0) _SumRow(label: appliedLabel != null ? 'Promo ($appliedLabel)' : 'Promo', value: '−${Formatters.money(couponDiscount)}', color: AppColors.rose),
+                    _SumRow(label: t('Subtotal', 'المجموع الفرعي'), value: Formatters.money(summary.subtotal)),
+                    if (summary.discount > 0) _SumRow(label: t('Discount', 'الخصم'), value: '−${Formatters.money(summary.discount)}', color: AppColors.rose),
+                    _SumRow(label: t('Delivery fee', 'رسوم التوصيل'), value: summary.deliveryFee == 0 ? t('Free', 'مجاني') : Formatters.money(summary.deliveryFee)),
+                    if (summary.couponDiscount > 0) _SumRow(label: appliedLabel != null ? '${t("Promo", "رمز الخصم")} ($appliedLabel)' : t('Promo', 'رمز الخصم'), value: '−${Formatters.money(summary.couponDiscount)}', color: AppColors.rose),
                     Container(
                       margin: const EdgeInsets.only(top: 3),
                       padding: const EdgeInsets.only(top: 11),
                       decoration: const BoxDecoration(border: Border(top: BorderSide(color: AppColors.line, width: 1))),
-                      child: _SumRow(label: 'Total', value: Formatters.money(grandTotal), bold: true),
+                      child: _SumRow(label: t('Total', 'الإجمالي'), value: Formatters.money(summary.grandTotal), bold: true),
                     ),
                   ],
                 ),
@@ -425,23 +558,48 @@ class _CheckoutBody extends StatelessWidget {
         ),
         child: SizedBox(
           width: double.infinity,
-          child: ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.rose,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
-              elevation: 0,
-            ),
-            onPressed: () => _placeOrder(context, cart, vm, initData),
-            child: Text('Place order · ${Formatters.money(initData?.summary.grandTotal ?? totals.due)}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
-          ),
+          child: Builder(builder: (context) {
+            // `initData` is a public field, not a local variable — Dart
+            // can't promote a public field from nullable to non-nullable
+            // just from an `== null` check the way it can a local `final`,
+            // even right next to the check (this is what actually failed
+            // the build once: "'initData' refers to a public property so
+            // it couldn't be promoted"). Captured into a local here so the
+            // compiler can actually see it's non-null below.
+            final data = initData;
+            return ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.rose,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+                elevation: 0,
+              ),
+              // Needs the real summary before this is tappable or shows an
+              // amount — checkout-init's own response is now already
+              // correct for whichever address is selected (confirmed live
+              // address_id/area_id, 2026-09-18), so this alone is enough;
+              // no separate per-address fee to also wait on anymore.
+              // Placing an order against a guessed number isn't something
+              // to let happen silently either way.
+              onPressed: data != null ? () => _placeOrder(context, cart, vm, data) : null,
+              child: data == null
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white))
+                  : Text(
+                      '${t("Place order", "تأكيد الطلب")} · ${Formatters.money(data.summary.grandTotal)}',
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                    ),
+            );
+          }),
         ),
+      ),
       ),
     );
   }
 
   Future<void> _placeOrder(BuildContext context, CartState cart, CheckoutViewModel vm, CheckoutInitData? initData) async {
+    final ar = context.read<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
     // Scoped to just this prescription's lines when rxScope is set — see
     // its doc on CheckoutScreen.
     final scopedRxCart =
@@ -456,17 +614,32 @@ class _CheckoutBody extends StatelessWidget {
     final address = addressState.effectiveAddress;
     final orders = context.read<OrdersState>();
     final location = context.read<LocationState>();
-    final totals = cart.computeTotals(storeOverride: cart.cartTab == 'rx' ? scopedRxCart : null);
-    // Prefer the server's own total (confirmed live via checkout-init) for
-    // the wallet-balance check, same reasoning as the summary display above.
-    final due = initData?.summary.grandTotal ?? totals.due;
+    // Still needed below for placeOrderRemote's own `totals:` argument
+    // (line grouping/structure for the request), independent of the fix
+    // just below for the actual wallet-check AMOUNT.
+    final totals = cart.computeTotals(
+      storeOverride: cart.cartTab == 'rx' ? scopedRxCart : null,
+      areaCatalog: addressState.areaCatalog,
+      areaId: address?.areaId,
+    );
+    // The button that calls this is already disabled until initData is
+    // ready (see its onPressed) — kept as an explicit guard anyway.
+    // checkout-init's own response is now already correct for whichever
+    // address is selected (confirmed live address_id/area_id,
+    // 2026-09-18), so summary.grandTotal alone is trustworthy here — no
+    // separate per-address fee to also factor in anymore.
+    if (initData == null) {
+      showErrorToast(context, t('Still loading your order — try again in a moment.', 'لا يزال طلبك قيد التحميل — حاول مرة أخرى بعد لحظات.'));
+      return;
+    }
+    final due = initData.summary.grandTotal;
 
     if (address == null) {
-      showErrorToast(context, 'Please add a delivery address before checking out.');
+      showErrorToast(context, t('Please add a delivery address before checking out.', 'يرجى إضافة عنوان توصيل قبل إتمام الطلب.'));
       return;
     }
     if (vm.pay == 'wallet' && orders.wallet < due) {
-      showErrorToast(context, 'Insufficient wallet balance for this order.');
+      showErrorToast(context, t('Insufficient wallet balance for this order.', 'رصيد المحفظة غير كافٍ لهذا الطلب.'));
       return;
     }
     if (address.governorateId == null || address.areaId == null) {
@@ -492,7 +665,7 @@ class _CheckoutBody extends StatelessWidget {
       if (saved == true) {
         await _placeOrder(context, cart, vm, initData);
       } else {
-        showErrorToast(context, 'Please add a delivery address before checking out.');
+        showErrorToast(context, t('Please add a delivery address before checking out.', 'يرجى إضافة عنوان توصيل قبل إتمام الطلب.'));
       }
       return;
     }
@@ -517,7 +690,7 @@ class _CheckoutBody extends StatelessWidget {
     // NOT awaited: showDialog()'s Future only resolves once the dialog is
     // popped — awaiting it here would block forever, since nothing pops it
     // until the code below (which never got a chance to run) does.
-    showBusyOverlay(context, message: 'Placing your order…');
+    showBusyOverlay(context, message: t('Placing your order…', 'جارٍ تقديم طلبك…'));
     try {
       final code = await orders.placeOrderRemote(
         userId: auth.userId!,
@@ -526,7 +699,18 @@ class _CheckoutBody extends StatelessWidget {
         address: address,
         pay: vm.pay,
         totals: totals,
-        coupon: initData?.appliedCouponCode ?? initData?.appliedPromo?.promoCode ?? '',
+        // Only a genuine typed/selected coupon code goes here — an
+        // auto-applied promotion (initData?.appliedPromo) has no code at
+        // all (see AppliedPromo's doc); sending its NAME as if it were one
+        // risked the order-placement endpoint trying to validate "testpromo"
+        // against a coupon-codes table and rejecting it, or worse silently
+        // ignoring the discount at the one moment it actually matters. The
+        // server already has this promotion applied in its own session
+        // state from the earlier successful /app/promotion/apply call, so
+        // it doesn't need to be told again here — worth confirming with
+        // backend that a placed order's final total does still correctly
+        // reflect an auto-applied promo when this field is empty.
+        coupon: initData?.appliedCouponCode ?? '',
         deliveryDate: deliveryDateStr,
         deliverySlot: deliverySlotId,
         // Sent alongside the structured address regardless of which saved
@@ -563,17 +747,17 @@ class _CheckoutBody extends StatelessWidget {
         if (!context.mounted) return;
 
         if (!result.success) {
-          showErrorToast(context, result.errorMessage ?? 'KNET payment failed. Your order is saved — you can try paying again from Order details.');
+          showErrorToast(context, result.errorMessage ?? t('KNET payment failed. Your order is saved — you can try paying again from Order details.', 'فشلت عملية الدفع عبر كي نت. تم حفظ طلبك — يمكنك محاولة الدفع مرة أخرى من تفاصيل الطلب.'));
           return; // stay on checkout; order already exists but isn't marked paid
         }
         if (!reported) {
-          showErrorToast(context, 'Payment went through, but we couldn\'t confirm it with the server. Please check Order details.');
+          showErrorToast(context, t('Payment went through, but we couldn\'t confirm it with the server. Please check Order details.', 'تمت عملية الدفع، لكن لم نتمكن من تأكيدها مع الخادم. يرجى مراجعة تفاصيل الطلب.'));
           return;
         }
       }
 
       cart.clearCartRemote(auth.userId!);
-      showToast(context, 'Order placed! Tracking #$code');
+      showToast(context, t('Order placed! Tracking #$code', 'تم تقديم الطلب! رقم التتبع #$code'));
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => TrackScreen(orderId: code)),
         (route) => route.isFirst,
@@ -601,19 +785,50 @@ class _CheckoutBody extends StatelessWidget {
   /// See the catch block in [_placeOrder] above for why this exists —
   /// same address-validation-error dialog used by [_placeRxOrder] too.
   Future<void> _showAddressErrorDialog(BuildContext context, AddressState addressState, String message) async {
+    final ar = context.read<LocaleState>().isArabic;
     final shouldEdit = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('There\'s a problem with this address'),
+      builder: (dialogContext) => Directionality(
+        textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+        child: AlertDialog(
+        title: Text(ar ? 'هناك مشكلة في هذا العنوان' : 'There\'s a problem with this address'),
         content: Text(message),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Edit address')),
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(ar ? 'إلغاء' : 'Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(ar ? 'تعديل العنوان' : 'Edit address')),
         ],
+        ),
       ),
     );
     if (shouldEdit == true && context.mounted) {
-      await showAddressFormSheet(context, addressState, addressState.selectedIndex);
+      // Was always `addressState.selectedIndex` — a SAVED address, even
+      // when the order is actually going to "Current location" instead
+      // (useCurrentLocation true). Confirmed live: the person's order was
+      // using their GPS-detected location, which has no block/building at
+      // all (that's exactly what this dialog is about) — but "Edit
+      // address" opened a COMPLETELY different, already-complete SAVED
+      // address's form instead, with nothing to do with the actual
+      // problem. Opening as "add new" (-1) instead correctly triggers
+      // _autofillFromLocation (see its doc) — it prefills governorate/
+      // area/street from the same live GPS match already being used for
+      // checkout, leaving just the genuinely-missing fields (block etc.)
+      // for the person to fill in, rather than either editing the wrong
+      // address or making them re-enter everything from scratch.
+      final index = addressState.useCurrentLocation ? -1 : addressState.selectedIndex;
+      final saved = await showAddressFormSheet(context, addressState, index);
+      // Without this, saveRemote() sets selectedIndex to the new address
+      // but leaves useCurrentLocation true — effectiveAddress would keep
+      // resolving back to the SAME incomplete GPS-only address regardless,
+      // so the exact same "block is required" error would recur on the
+      // very next "Place order" attempt despite having just fixed it.
+      // select() flips that off (and re-selects the same index, which
+      // saveRemote already set correctly — redundant there, but reuses its
+      // existing, already-correct refresh logic rather than duplicating
+      // it). Only in this specific flow — an unrelated address edit
+      // elsewhere shouldn't silently switch what's active for checkout.
+      if (saved == true && index == -1 && context.mounted) {
+        addressState.select(addressState.selectedIndex);
+      }
     }
   }
 
@@ -631,8 +846,10 @@ class _CheckoutBody extends StatelessWidget {
     Address address,
     OrdersState orders,
   ) async {
+    final ar = context.read<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
     if (address.id == null) {
-      showErrorToast(context, 'Rx checkout needs a saved address — please pick one instead of using your current location.');
+      showErrorToast(context, t('Rx checkout needs a saved address — please pick one instead of using your current location.', 'يتطلب إتمام طلب الوصفة عنواناً محفوظاً — يرجى اختيار عنوان بدلاً من استخدام موقعك الحالي.'));
       return;
     }
 
@@ -651,15 +868,15 @@ class _CheckoutBody extends StatelessWidget {
     // it silently vanish.
     final outOfStockKeys = scopedRxCart.entries.where((e) => !cart.isRxLineInStock(e.value)).map((e) => e.key).toSet();
     if (outOfStockKeys.length == scopedRxCart.length && scopedRxCart.isNotEmpty) {
-      showErrorToast(context, 'Every item in your Rx cart is out of stock right now — nothing to submit.');
+      showErrorToast(context, t('Every item in your Rx cart is out of stock right now — nothing to submit.', 'كل العناصر في سلة الوصفة غير متوفرة حالياً — لا يوجد شيء لإرساله.'));
       return;
     }
     final inStockRxCart = Map<String, CartLine>.fromEntries(scopedRxCart.entries.where((e) => !outOfStockKeys.contains(e.key)));
     if (outOfStockKeys.isNotEmpty) {
-      showToast(context, '${outOfStockKeys.length} out-of-stock item${outOfStockKeys.length > 1 ? 's' : ''} skipped');
+      showToast(context, t('${outOfStockKeys.length} out-of-stock item${outOfStockKeys.length > 1 ? 's' : ''} skipped', '${outOfStockKeys.length} عنصر غير متوفر تم تخطيه'));
     }
 
-    showBusyOverlay(context, message: 'Submitting your prescription order…');
+    showBusyOverlay(context, message: t('Submitting your prescription order…', 'جارٍ إرسال طلب وصفتك…'));
     try {
       final results = await orders.placeRxOrdersRemote(
         userId: auth.userId!,
@@ -682,7 +899,7 @@ class _CheckoutBody extends StatelessWidget {
       }
 
       if (failed.isEmpty) {
-        showToast(context, succeeded.length > 1 ? 'Submitted ${succeeded.length} prescription orders' : 'Prescription order submitted');
+        showToast(context, succeeded.length > 1 ? t('Submitted ${succeeded.length} prescription orders', 'تم إرسال ${succeeded.length} طلبات وصفة') : t('Prescription order submitted', 'تم إرسال طلب الوصفة'));
         final code = succeeded.first.orderCode;
         if (code != null) {
           Navigator.of(context).pushAndRemoveUntil(
@@ -693,7 +910,7 @@ class _CheckoutBody extends StatelessWidget {
           Navigator.pop(context);
         }
       } else if (succeeded.isEmpty) {
-        final message = failed.first.error ?? 'Couldn\'t submit your prescription order.';
+        final message = failed.first.error ?? t('Couldn\'t submit your prescription order.', 'تعذر إرسال طلب وصفتك.');
         if (message.toLowerCase().contains('address.')) {
           await _showAddressErrorDialog(context, context.read<AddressState>(), message);
         } else {
@@ -701,7 +918,7 @@ class _CheckoutBody extends StatelessWidget {
         }
       } else {
         // Mixed result — some prescriptions checked out, at least one didn't.
-        showToast(context, '${succeeded.length} submitted, ${failed.length} failed — still in your Rx cart');
+        showToast(context, t('${succeeded.length} submitted, ${failed.length} failed — still in your Rx cart', 'تم إرسال ${succeeded.length}، وفشل ${failed.length} — لا تزال في سلة الوصفة'));
         Navigator.pop(context);
       }
     } catch (e) {
@@ -729,19 +946,43 @@ class _CheckoutBody extends StatelessWidget {
     required int itemCount,
     int? areaId,
   }) {
+    final ar = context.read<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
     final auth = context.read<AuthState>();
     final userId = auth.userId;
-    final currentCode = initData?.appliedCouponCode ?? initData?.appliedPromo?.promoCode ?? '';
+    // Only a genuine typed code pre-fills this — an auto-applied
+    // promotion's own NAME (e.g. "testpromo") isn't something the person
+    // could type back in here as if it were a code (see AppliedPromo's doc
+    // for why it was never really a "code" at all).
+    final currentCode = initData?.appliedCouponCode ?? '';
     final controller = TextEditingController(text: currentCode);
-    final active = (initData?.promotions ?? const <Promotion>[]).where((p) => p.isActive).toList();
-    final hasApplied = (initData?.appliedCouponCode != null) || (initData?.appliedPromo != null);
+    // Excludes whichever promotion is already auto-applied (matched by its
+    // real promotion_id, not the old broken id-from-Promotion.fromJson
+    // comparison) — without this, an already-applied no-code promotion
+    // kept showing in this list as if it still needed tapping.
+    final appliedPromotionId = initData?.appliedPromo?.promotionId;
+    final active = (initData?.promotions ?? const <Promotion>[]).where((p) => p.isActive && p.id != appliedPromotionId).toList();
+    // Only a genuine typed coupon code can actually be removed —
+    // AccountService.removePromotion requires a `code` string, which an
+    // auto-applied promotion (initData?.appliedPromo) simply doesn't have
+    // (see AppliedPromo's doc). Including that case here would show a
+    // "Remove applied code" button that, on tap, sends an EMPTY code to
+    // that endpoint — confirmed by checking the remove call's own required
+    // parameter, not yet confirmed against a real failed attempt, but
+    // there's no code this could possibly remove either way. If an
+    // auto-applied promotion should be user-removable at all, that needs
+    // its own way to do it (e.g. by promotion_id) — ask backend rather
+    // than guessing one here.
+    final hasApplied = initData?.appliedCouponCode != null;
 
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
-      builder: (sheetContext) => Padding(
+      builder: (sheetContext) => Directionality(
+        textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+        child: Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.of(sheetContext).viewInsets.bottom),
         child: StatefulBuilder(builder: (sheetContext, setSheetState) {
           bool checking = false;
@@ -749,10 +990,16 @@ class _CheckoutBody extends StatelessWidget {
 
           // Apply/remove only return {success, message, ...} — not the
           // updated cart/totals — so a successful one needs a follow-up
-          // full re-fetch to actually refresh what's on screen.
+          // full re-fetch to actually refresh what's on screen. Same
+          // address-context fix as the auto-apply path in
+          // _loadCheckoutInit — without addressId/areaId here, this could
+          // come back reflecting a different address's checkout state
+          // than the one actually in use, making a successful apply look
+          // like it didn't take.
           Future<void> refreshAfterChange() async {
             if (userId == null) return;
-            final fresh = await AccountService.instance.checkoutInit(userId, prescriptionId: rxScope);
+            final address = context.read<AddressState>().effectiveAddress;
+            final fresh = await AccountService.instance.checkoutInit(userId, prescriptionId: rxScope, addressId: address?.id, areaId: address?.areaId);
             onChanged(fresh);
           }
 
@@ -762,13 +1009,17 @@ class _CheckoutBody extends StatelessWidget {
             try {
               final result = await AccountService.instance.applyPromoCode(userId, code, subtotal: subtotal);
               if (!result.success) {
-                setSheetState(() { checking = false; error = result.message ?? 'That code isn\'t valid for this order.'; });
+                final msg = result.message ?? t('That code isn\'t valid for this order.', 'هذا الرمز غير صالح لهذا الطلب.');
+                setSheetState(() { checking = false; error = msg; });
+                showErrorToast(sheetContext, msg);
                 return;
               }
               await refreshAfterChange();
               if (sheetContext.mounted) Navigator.pop(sheetContext);
             } catch (e) {
-              setSheetState(() { checking = false; error = describeError(e); });
+              final msg = describeError(e);
+              setSheetState(() { checking = false; error = msg; });
+              showErrorToast(sheetContext, msg);
             }
           }
 
@@ -782,13 +1033,27 @@ class _CheckoutBody extends StatelessWidget {
             try {
               final result = await AccountService.instance.applyPromotion(userId, promo.id, subtotal: subtotal, itemCount: itemCount, areaId: areaId);
               if (!result.success) {
-                setSheetState(() { checking = false; error = result.message ?? 'Couldn\'t apply that offer.'; });
+                // Was ONLY setting `error` here, which is bound to the typed-
+                // code TextField's `errorText` further down — meaningless for
+                // a failure that came from tapping a LISTED offer, not typing
+                // anything into that field. With the list sitting below the
+                // field (sometimes well below, on a scrolled sheet), that left
+                // this failure with no visible feedback at all — tapping an
+                // offer that then silently did nothing, confirmed live: a
+                // real "Promotion not found or expired" 404 on tapping
+                // exactly this kind of listed offer. A toast is visible
+                // regardless of where in the sheet the person's looking.
+                final msg = result.message ?? t('Couldn\'t apply that offer.', 'تعذر تطبيق هذا العرض.');
+                setSheetState(() { checking = false; error = msg; });
+                showErrorToast(sheetContext, msg);
                 return;
               }
               await refreshAfterChange();
               if (sheetContext.mounted) Navigator.pop(sheetContext);
             } catch (e) {
-              setSheetState(() { checking = false; error = describeError(e); });
+              final msg = describeError(e);
+              setSheetState(() { checking = false; error = msg; });
+              showErrorToast(sheetContext, msg);
             }
           }
 
@@ -796,16 +1061,25 @@ class _CheckoutBody extends StatelessWidget {
             if (userId == null) return;
             setSheetState(() { checking = true; error = null; });
             try {
-              final currentCode = initData?.appliedCouponCode ?? initData?.appliedPromo?.promoCode ?? '';
+              // hasApplied (which gates the button that calls this) now
+              // only true for a genuine typed code, so this should always
+              // be non-empty in practice — kept as a plain lookup with no
+              // appliedPromo fallback either way, same reasoning as the
+              // other currentCode above.
+              final currentCode = initData?.appliedCouponCode ?? '';
               final result = await AccountService.instance.removePromotion(userId, code: currentCode, subtotal: subtotal);
               if (!result.success) {
-                setSheetState(() { checking = false; error = result.message ?? 'Couldn\'t remove that offer.'; });
+                final msg = result.message ?? t('Couldn\'t remove that offer.', 'تعذر إزالة هذا العرض.');
+                setSheetState(() { checking = false; error = msg; });
+                showErrorToast(sheetContext, msg);
                 return;
               }
               await refreshAfterChange();
               if (sheetContext.mounted) Navigator.pop(sheetContext);
             } catch (e) {
-              setSheetState(() { checking = false; error = describeError(e); });
+              final msg = describeError(e);
+              setSheetState(() { checking = false; error = msg; });
+              showErrorToast(sheetContext, msg);
             }
           }
 
@@ -817,7 +1091,7 @@ class _CheckoutBody extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                    const Text('Promo code', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.navy)),
+                    Text(t('Promo code', 'رمز الخصم'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: AppColors.navy)),
                     InkWell(onTap: () => Navigator.pop(sheetContext), child: const Icon(Icons.close_rounded, size: 20, color: AppColors.muted)),
                   ]),
                   const SizedBox(height: 14),
@@ -825,7 +1099,7 @@ class _CheckoutBody extends StatelessWidget {
                     controller: controller,
                     textCapitalization: TextCapitalization.characters,
                     decoration: InputDecoration(
-                      hintText: 'Enter code',
+                      hintText: t('Enter code', 'أدخل الرمز'),
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                       errorText: error,
                     ),
@@ -836,7 +1110,7 @@ class _CheckoutBody extends StatelessWidget {
                     child: ElevatedButton(
                       style: ElevatedButton.styleFrom(backgroundColor: AppColors.navy, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 13)),
                       onPressed: checking ? null : () => applyCode(controller.text.trim()),
-                      child: Text(checking ? 'Applying…' : 'Apply'),
+                      child: Text(checking ? t('Applying…', 'جارٍ التطبيق…') : t('Apply', 'تطبيق')),
                     ),
                   ),
                   if (hasApplied)
@@ -846,7 +1120,7 @@ class _CheckoutBody extends StatelessWidget {
                         width: double.infinity,
                         child: OutlinedButton(
                           onPressed: checking ? null : remove,
-                          child: const Text('Remove applied code'),
+                          child: Text(t('Remove applied code', 'إزالة الرمز المطبق')),
                         ),
                       ),
                     ),
@@ -856,7 +1130,7 @@ class _CheckoutBody extends StatelessWidget {
                   // applies directly by its id via /app/promotion/apply.
                   if (active.isNotEmpty) ...[
                     const SizedBox(height: 18),
-                    const Text('Available offers', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.navy)),
+                    Text(t('Available offers', 'العروض المتاحة'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.navy)),
                     const SizedBox(height: 8),
                     ConstrainedBox(
                       constraints: const BoxConstraints(maxHeight: 220),
@@ -871,13 +1145,21 @@ class _CheckoutBody extends StatelessWidget {
                           // config number, not display text. Falls back to
                           // building one only if label is somehow missing.
                           final desc = promo.label ?? (promo.offerType == 'percent'
-                              ? '${promo.offerValue.toStringAsFixed(0)}% off'
-                              : Formatters.money(promo.offerValue) + ' off');
+                              ? t('${promo.offerValue.toStringAsFixed(0)}% off', '${promo.offerValue.toStringAsFixed(0)}% خصم')
+                              : t('${Formatters.money(promo.offerValue)} off', '${Formatters.money(promo.offerValue)} خصم'));
                           // The ACTUAL savings for THIS cart (not just the
                           // promo's raw rate) — matters most for a percent
                           // promo, where "20% off" alone doesn't say how
-                          // much that comes to on the current subtotal.
-                          final savings = (promo.offerType == 'percent' && promo.discount > 0) ? ' · saves ${Formatters.money(promo.discount)}' : '';
+                          // much that comes to on the current subtotal. Was
+                          // gated on `offerType == 'percent'` too, but a
+                          // real live promo had `offer_type: "A percent
+                          // amount discount"` (free text, not that literal
+                          // key) alongside a real non-zero `discount` —
+                          // discount>0 alone is the confirmed signal (see
+                          // Promotion.isActive's doc comment for the same
+                          // issue), so this no longer depends on offerType's
+                          // exact wording at all.
+                          final savings = promo.discount > 0 ? t(' · saves ${Formatters.money(promo.discount)}', ' · يوفر ${Formatters.money(promo.discount)}') : '';
                           return GestureDetector(
                             onTap: checking ? null : () => applyPromotion(promo),
                             child: Container(
@@ -891,7 +1173,7 @@ class _CheckoutBody extends StatelessWidget {
                                       Text(promo.title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5, color: AppColors.navy)),
                                       const SizedBox(height: 2),
                                       Text(
-                                        promo.requiresCode ? '$desc$savings · code ${promo.promoCode}' : '$desc$savings',
+                                        promo.requiresCode ? '$desc$savings · ${t("code", "الرمز")} ${promo.promoCode}' : '$desc$savings',
                                         style: const TextStyle(fontSize: 11, color: AppColors.muted),
                                       ),
                                     ],
@@ -910,6 +1192,7 @@ class _CheckoutBody extends StatelessWidget {
             ),
           );
         }),
+        ),
       ),
     );
   }
@@ -928,10 +1211,19 @@ class _Calendar extends StatelessWidget {
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December',
   ];
+  static const _monthsAr = [
+    'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
+    'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
+  ];
   static const _dow = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+  // Single-letter day headers are the idiomatic short form in Arabic
+  // calendar UIs (there's no clean 2-letter abbreviation convention the
+  // way English has Su/Mo/Tu) — same Sunday-first order as _dow above.
+  static const _dowAr = ['ح', 'ن', 'ث', 'ر', 'خ', 'ج', 'س'];
 
   @override
   Widget build(BuildContext context) {
+    final ar = context.watch<LocaleState>().isArabic;
     final y = vm.calendarMonth.year;
     final m = vm.calendarMonth.month; // 1-12
     final today = DateTime.now();
@@ -939,8 +1231,12 @@ class _Calendar extends StatelessWidget {
     final firstOfMonth = DateTime(y, m, 1);
     final daysInMonth = DateTime(y, m + 1, 0).day;
     final startDow = firstOfMonth.weekday % 7; // DateTime.weekday: Mon=1..Sun=7 -> Sun=0..Sat=6
+    final monthNames = ar ? _monthsAr : _months;
+    final dowLabels = ar ? _dowAr : _dow;
 
-    return Container(
+    return Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 6),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(color: Colors.white, border: Border.all(color: AppColors.line, width: 1.5), borderRadius: BorderRadius.circular(14)),
@@ -956,7 +1252,7 @@ class _Calendar extends StatelessWidget {
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
-              Text('${_months[m - 1]} $y', style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 14)),
+              Text('${monthNames[m - 1]} $y', style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 14)),
               IconButton(
                 onPressed: () => vm.calNav(1),
                 icon: const Icon(Icons.chevron_right_rounded, color: AppColors.navy),
@@ -967,7 +1263,7 @@ class _Calendar extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           // .cal-dow
-          Row(children: [for (final d in _dow) Expanded(child: Center(child: Text(d, style: const TextStyle(fontSize: 11, color: AppColors.muted, fontWeight: FontWeight.w600))))]),
+          Row(children: [for (final d in dowLabels) Expanded(child: Center(child: Text(d, style: const TextStyle(fontSize: 11, color: AppColors.muted, fontWeight: FontWeight.w600))))]),
           const SizedBox(height: 4),
           // .cal-grid
           GridView.builder(
@@ -1000,6 +1296,7 @@ class _Calendar extends StatelessWidget {
             },
           ),
         ],
+      ),
       ),
     );
   }

@@ -234,7 +234,18 @@ class OrdersState extends ChangeNotifier {
         .toList();
     orders.insert(
       0,
-      Order(id: result.code, ts: DateTime.now(), total: result.total > 0 ? result.total : totals.due, pay: pay, status: 'prep', groups: groups),
+      // Was `result.total > 0 ? result.total : totals.due` — `totals.due`
+      // is CartState.computeTotals()'s own internal total, which still
+      // carries the old fake flat-rate delivery fee baked in (nothing
+      // ever corrected THIS particular copy of it the way cart_screen.dart
+      // explicitly does for its own display — see that fix's history).
+      // `result.total` is the server's own confirmed total for the order
+      // that was JUST actually placed and charged — there's no real
+      // scenario where that's untrustworthy but a locally-reconstructed
+      // guess would be better. This Order is only a placeholder shown
+      // instantly before the next real orders-list refresh replaces it —
+      // even a rare wrong number here would be visible in the meantime.
+      Order(id: result.code, ts: DateTime.now(), total: result.total, pay: pay, status: 'prep', groups: groups),
     );
     trackingOrderId = result.code;
     notifyListeners();

@@ -48,14 +48,25 @@ class AuthState extends ChangeNotifier {
   /// gateway is live in production). Null the moment that field is absent —
   /// so this naturally disappears on its own once they go live with real SMS.
   String? devOtpCode;
+  /// True until proven otherwise — matches today's "always ask for a name"
+  /// behavior if the backend response doesn't include `is_new_user` yet.
+  /// Once it does, false + [knownName] set is what lets the OTP screen
+  /// show "Welcome back, X" instead of a name field.
+  bool isNewUser = true;
+  String? knownName;
 
   Future<bool> requestOtp(String phone) async {
     otpSending = true;
     otpError = null;
     devOtpCode = null;
+    isNewUser = true;
+    knownName = null;
     notifyListeners();
     try {
-      devOtpCode = await _service.requestOtp(phone);
+      final result = await _service.requestOtp(phone);
+      devOtpCode = result.devCode;
+      isNewUser = result.isNewUser;
+      knownName = result.existingName;
       phoneInFlight = phone;
       return true;
     } catch (e) {

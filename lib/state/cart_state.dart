@@ -6,6 +6,7 @@ import '../core/utils/auth_gate.dart';
 import '../core/widgets/async_state_view.dart';
 import '../data/models/cart_line.dart';
 import '../data/models/coupon_result.dart';
+import '../data/models/area_catalog.dart';
 import '../data/models/prescription.dart';
 import '../data/models/product.dart';
 import '../data/models/promo.dart';
@@ -807,7 +808,26 @@ class CartState extends ChangeNotifier {
   double groupSubtotal(List<CartLine> items) =>
       items.fold(0.0, (s, l) => s + lineCharge(l));
 
-  double pharmacyFee(double sub) => sub >= 3 ? 0 : 0.750;
+  /// Was `sub >= 3 ? 0 : 0.750` unconditionally — a flat rule straight out
+  /// of the HTML prototype, applied regardless of which real delivery area
+  /// the order is actually going to. This is the SAME bug already fixed
+  /// once in checkout_screen.dart's own order-summary display (which reads
+  /// `AreaCatalog.feeFor` directly instead of touching this method at
+  /// all) — but this method itself, which [computeTotals] actually uses,
+  /// was never fixed, so every OTHER caller of [computeTotals] was still
+  /// silently getting the fake flat rate: the Cart screen's own bottom-bar
+  /// total (100% of the time — Cart has no server checkout data to fall
+  /// back from at all) and Checkout's own wallet-balance check and
+  /// "Place order" button amount, in the brief window before its real
+  /// `/app/checkout` fetch resolves. Now uses the real per-area
+  /// `free_enabled`/`free_over`/per-area `fee` data when the caller can
+  /// supply it — see [computeTotals]'s new `areaCatalog`/`areaId` params —
+  /// falling back to the old flat rule only when a caller genuinely has no
+  /// area context at all (e.g. before AddressState has loaded anything).
+  double pharmacyFee(double sub, {AreaCatalog? areaCatalog, int? areaId}) {
+    if (areaCatalog != null) return areaCatalog.feeFor(areaId, sub);
+    return sub >= 3 ? 0 : 0.750;
+  }
 
   double cartSubtotal(Map<String, CartLine> store) =>
       store.values.fold(0.0, (s, l) => s + lineCharge(l));
@@ -822,9 +842,9 @@ class CartState extends ChangeNotifier {
   /// to the toggle so that trade-off isn't a surprise after switching it on.
   static const double togetherDeliveryFee = 1.250;
 
-  double deliveryTotal(Map<String, List<CartLine>> groups) {
+  double deliveryTotal(Map<String, List<CartLine>> groups, {AreaCatalog? areaCatalog, int? areaId}) {
     if (deliverTogether && groups.keys.length > 1) return togetherDeliveryFee;
-    return groups.values.fold(0.0, (s, items) => s + pharmacyFee(groupSubtotal(items)));
+    return groups.values.fold(0.0, (s, items) => s + pharmacyFee(groupSubtotal(items), areaCatalog: areaCatalog, areaId: areaId));
   }
 
   /// Validates [code] against the real `/coupon` endpoint for the given
@@ -857,13 +877,17 @@ class CartState extends ChangeNotifier {
   /// prescription (see checkout_screen.dart's `rxScope`), since each
   /// prescription checks out separately rather than the whole Rx cart at
   /// once (confirmed against the reference web app, 2026-07-31).
-  CheckoutTotals computeTotals({Map<String, CartLine>? storeOverride}) {
+  /// [areaCatalog]/[areaId] — see [pharmacyFee]'s doc for why passing these
+  /// (when the caller has AddressState in scope) matters: without them,
+  /// the delivery fee here silently reverts to a fake flat rate that has
+  /// nothing to do with the order's real delivery area.
+  CheckoutTotals computeTotals({Map<String, CartLine>? storeOverride, AreaCatalog? areaCatalog, int? areaId}) {
     final store = storeOverride ?? (cartTab == 'rx' ? rxCart : cart);
     final groups = groupsFor(store);
     final before = store.values.fold(0.0, (s, l) => s + l.lineTotalBeforeDiscount);
     final sub = cartSubtotal(store);
     final itemDiscount = double.parse((before - sub).toStringAsFixed(3));
-    final fee = deliveryTotal(groups);
+    final fee = deliveryTotal(groups, areaCatalog: areaCatalog, areaId: areaId);
 
     final coupon = appliedCoupon;
     Promo? promoDisplay;

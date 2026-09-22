@@ -2,18 +2,38 @@ import '../../core/network/api_client.dart';
 import '../../core/network/api_config.dart';
 import '../models/app_user.dart';
 
+/// Everything the OTP-request response can tell the UI before the code is
+/// even verified: the sandbox dev code (if any), and whether this phone
+/// already belongs to a signed-up person — see [AuthService.requestOtp].
+class OtpRequestResult {
+  const OtpRequestResult({this.devCode, required this.isNewUser, this.existingName});
+  final String? devCode;
+  final bool isNewUser;
+  final String? existingName;
+}
+
 class AuthService {
   AuthService._();
   static final AuthService instance = AuthService._();
   final ApiClient _client = ApiClient.instance;
 
-  /// Requests an OTP for [phone]. Returns the `dev_code` when the backend
-  /// includes one (sandbox/dev mode, before the SMS gateway is live) so the
-  /// UI can pre-fill it for faster testing — null in production.
-  Future<String?> requestOtp(String phone) async {
+  /// Requests an OTP for [phone]. The backend response can carry three
+  /// independent pieces of info: `dev_code` (sandbox/dev mode, before the
+  /// SMS gateway is live — the UI pre-fills it for faster testing), and
+  /// `is_new_user` + `name` (whether this phone already has an account,
+  /// and their saved name if so) — this second pair is what lets the OTP
+  /// screen skip asking for a name and show "Welcome back, X" instead for
+  /// a returning person, rather than asking every time as if it might be
+  /// a first signup. `is_new_user` defaults to true (today's behavior —
+  /// always ask for a name) if the backend doesn't send it yet.
+  Future<OtpRequestResult> requestOtp(String phone) async {
     final res = await _client.post(ApiConfig.otpRequest, body: {'phone': phone});
-    if (res is Map && res['dev_code'] != null) return res['dev_code'].toString();
-    return null;
+    final map = res is Map ? res : const {};
+    return OtpRequestResult(
+      devCode: map['dev_code']?.toString(),
+      isNewUser: map['is_new_user'] is bool ? map['is_new_user'] as bool : true,
+      existingName: map['name']?.toString(),
+    );
   }
 
   /// Verifies [code] for [phone]. [name] is only used the first time a phone

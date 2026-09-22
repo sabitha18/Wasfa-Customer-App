@@ -76,6 +76,20 @@ class CatalogRepository {
     liveProductCategories = cats;
   }
 
+  /// Real stores with their actual ids (`/app/stores`), cached whenever
+  /// Home fetches them — reused by ShopViewModel to resolve a Pharmacy
+  /// filter chip's NAME back to the real store id `shop=<id>` needs
+  /// (confirmed 2026-09-17: same param already used for full-store
+  /// browsing). Products themselves only ever carry a seller/pharmacy
+  /// NAME string, never an id, so this is the only place an id for a
+  /// given pharmacy name is available at all.
+  List<PharmacyStore> stores = [];
+
+  void cacheStores(List<PharmacyStore> list) {
+    if (list.isEmpty) return;
+    stores = list;
+  }
+
   static const categories = <StoreCategory>[
     StoreCategory('all', '🏬', 'All stores', 'كل المتاجر'),
     StoreCategory('pharmacy', '💊', 'Pharmacy', 'صيدلية'),
