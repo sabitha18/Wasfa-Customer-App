@@ -144,7 +144,6 @@ class _HomeBody extends StatelessWidget {
                   _FilterChip(label: t('Offers', 'العروض'), on: vm.storeFilters['offers']!, onTap: () => vm.toggleFilter('offers')),
                   _FilterChip(label: t('Under 30 mins', 'أقل من 30 دقيقة'), on: vm.storeFilters['under30']!, onTap: () => vm.toggleFilter('under30')),
                   _FilterChip(label: t('Free delivery', 'توصيل مجاني'), on: vm.storeFilters['free']!, onTap: () => vm.toggleFilter('free')),
-                  _FilterChip(label: t('Pro', 'مميز'), on: vm.storeFilters['pro']!, onTap: () => vm.toggleFilter('pro')),
                 ],
               ),
             ),

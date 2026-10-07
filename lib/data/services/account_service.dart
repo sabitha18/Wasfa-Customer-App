@@ -191,9 +191,17 @@ class AccountService {
   /// earlier version of this method claimed "the confirmed example didn't
   /// show a request body at all" and only sent `user_id`, which was wrong;
   /// `code`/`subtotal` were missing entirely.
-  Future<PromoApplyResult> removePromotion(int userId, {required String code, required double subtotal}) async {
+  /// ✅ Confirmed by backend (2026-09-23): only needs `user_id` — removes
+  /// whatever promotion/coupon is currently applied for that user,
+  /// regardless of whether it was a typed code or an auto-applied
+  /// promotion (initData?.appliedPromo, see AppliedPromo's doc). Neither
+  /// `code` nor `promotion_id` is needed at all; the earlier version of
+  /// this method (which required one or the other) was based on an
+  /// assumption that turned out to be wrong once backend actually
+  /// clarified the real contract.
+  Future<PromoApplyResult> removePromotion(int userId, {required double subtotal}) async {
     final res = await withFallbackMessage(
-      () => _client.post(ApiConfig.promotionRemove, body: {'user_id': userId, 'code': code, 'subtotal': subtotal}),
+      () => _client.post(ApiConfig.promotionRemove, body: {'user_id': userId, 'subtotal': subtotal}),
       'Couldn\'t remove that offer right now.',
     );
     return PromoApplyResult.fromJson(res as Map<String, dynamic>);

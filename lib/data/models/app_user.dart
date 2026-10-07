@@ -21,6 +21,10 @@ class AppUser {
   final String? emergName;
   final String? emergRel;
   final String? emergPhone;
+  /// ✅ Confirmed live (2026-09-28, real `GET /acct/profile` response):
+  /// `profile_pic` — none of the earlier guessed candidates (`image`,
+  /// `photo`, `photo_url`, `avatar`, `profile_photo`) were actually right.
+  final String? photoUrl;
 
   const AppUser({
     required this.id,
@@ -37,6 +41,7 @@ class AppUser {
     this.emergName,
     this.emergRel,
     this.emergPhone,
+    this.photoUrl,
   });
 
   factory AppUser.fromJson(Map<String, dynamic> json) => AppUser(
@@ -54,6 +59,7 @@ class AppUser {
         emergName: _asStringOrNull(json['emergency_name']),
         emergRel: _asStringOrNull(json['emergency_relation']),
         emergPhone: _asStringOrNull(json['emergency_phone']),
+        photoUrl: _asStringOrNull(json['profile_pic']),
       );
 
   Map<String, dynamic> toJson() => {
@@ -71,6 +77,7 @@ class AppUser {
         if (emergName != null) 'emergency_name': emergName,
         if (emergRel != null) 'emergency_relation': emergRel,
         if (emergPhone != null) 'emergency_phone': emergPhone,
+        if (photoUrl != null) 'profile_pic': photoUrl,
       };
 
   static int _asInt(dynamic v) {

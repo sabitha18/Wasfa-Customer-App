@@ -23,7 +23,6 @@ class HomeViewModel extends ChangeNotifier {
     'offers': false,
     'under30': false,
     'free': false,
-    'pro': false,
   };
 
   HomeViewModel({double? lat, double? lng, int? governorateId, int? areaId}) {
@@ -129,7 +128,6 @@ class HomeViewModel extends ChangeNotifier {
     if (storeFilters['offers'] == true) list = list.where((s) => s.offer != null).toList();
     if (storeFilters['under30'] == true) list = list.where((s) => s.fast).toList();
     if (storeFilters['free'] == true) list = list.where((s) => s.freeDelivery).toList();
-    if (storeFilters['pro'] == true) list = list.where((s) => s.pro).toList();
     return list;
   }
 }

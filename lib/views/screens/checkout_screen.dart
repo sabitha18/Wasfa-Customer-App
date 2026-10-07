@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/theme/app_colors.dart';
@@ -58,14 +59,24 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   // a locally-patched number the way this used to work around it.
   int? _lastAddressId;
   int? _lastAreaId;
+  // Held directly instead of looked up through `context` in dispose(): by
+  // then the element is deactivated and `context.read` throws ("Looking up
+  // a deactivated widget's ancestor is unsafe" — seen in real device logs),
+  // so removeListener never ran and the listener outlived this screen,
+  // re-fetching checkout and re-throwing on every later address change.
+  AddressState? _addressState;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final addressState = context.read<AddressState>();
+      _addressState = addressState;
       final location = context.read<LocationState>();
       await addressState.loadAreas();
+      // Left the screen while areas were loading — registering the listener
+      // now would leak it, since dispose() has already run.
+      if (!mounted) return;
       // Match the GPS-detected area against the real catalog now that it's
       // loaded, so "Current location" (the default) carries a real
       // governorate/area, not just a display label.
@@ -98,7 +109,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   @override
   void dispose() {
-    context.read<AddressState>().removeListener(_onAddressChanged);
+    _addressState?.removeListener(_onAddressChanged);
     super.dispose();
   }
 
@@ -109,7 +120,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   /// AddressState notification (it fires for plenty of unrelated reasons
   /// too — e.g. its own delivery-charge refresh completing).
   void _onAddressChanged() {
-    final addressState = context.read<AddressState>();
+    final addressState = _addressState;
+    if (!mounted || addressState == null) return;
     final a = addressState.effectiveAddress;
     if (a?.id == _lastAddressId && a?.areaId == _lastAreaId) return;
     _lastAddressId = a?.id;
@@ -727,9 +739,10 @@ class _CheckoutBody extends StatelessWidget {
       // chosen — does the Tap `goSellSDK` session start, using the new
       // order's own code as the reference reported back afterwards. COD
       // and wallet finish immediately here, same as before.
+      TapChargeOutcome? verified;
       if (vm.pay == 'knet') {
         final customerName = auth.user?.name.isNotEmpty == true ? auth.user!.name : address.first;
-        final result = await TapPaymentService.instance.payWithKnet(
+        var result = await TapPaymentService.instance.payWithKnet(
           userId: auth.userId!,
           amount: due,
           customerFirstName: customerName,
@@ -739,6 +752,45 @@ class _CheckoutBody extends StatelessWidget {
         );
         if (!context.mounted) return;
 
+        // Session ended via the plugin's cancel callback — no charge id, so
+        // there's nothing to verify against Tap, and (like the old native
+        // app, which does nothing on sessionCancelled) nothing is reported
+        // to the backend: telling it "failed" would assert something this
+        // app can't actually know. A KNET payment can complete at the bank
+        // while the session still ends this way (the real incident), so the
+        // customer is told plainly what to do rather than a vanishing toast.
+        if (result.cancelled) {
+          final viewOrder = await _showPaymentCancelledDialog(context, code);
+          if (!context.mounted) return;
+          if (viewOrder == true) {
+            cart.clearCartRemote(auth.userId!);
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => TrackScreen(orderId: code)),
+              (route) => route.isFirst,
+            );
+          }
+          return;
+        }
+
+        // The SDK's own result isn't a reliable verdict for a redirect-based
+        // method like KNET: real incident (2026-10-03) — Tap's dashboard
+        // showed the charge Captured / Paid successfully while this app was
+        // told it failed, so the customer saw "Payment was not completed"
+        // for money that had actually left their account. Whenever the SDK
+        // says anything other than success but a charge exists, ask Tap
+        // directly what really happened before telling the customer
+        // anything (see TapPaymentService.verifyCharge).
+        final chargeId = result.chargeId;
+        if (!result.success && chargeId != null && chargeId.isNotEmpty) {
+          showBusyOverlay(context, message: t('Confirming your payment…', 'جارٍ تأكيد الدفع…'));
+          verified = await TapPaymentService.instance.verifyCharge(chargeId);
+          if (context.mounted) hideBusyOverlay(context);
+          if (!context.mounted) return;
+          if (verified == TapChargeOutcome.captured) {
+            result = TapPaymentResult(success: true, chargeId: chargeId);
+          }
+        }
+
         final reported = await TapPaymentService.instance.reportPaymentResponse(
           orderCode: code,
           success: result.success,
@@ -746,18 +798,34 @@ class _CheckoutBody extends StatelessWidget {
         );
         if (!context.mounted) return;
 
-        if (!result.success) {
+        if (!result.success && verified != TapChargeOutcome.pending) {
           showErrorToast(context, result.errorMessage ?? t('KNET payment failed. Your order is saved — you can try paying again from Order details.', 'فشلت عملية الدفع عبر كي نت. تم حفظ طلبك — يمكنك محاولة الدفع مرة أخرى من تفاصيل الطلب.'));
+          if (TapPaymentService.paymentDebug) await _showPaymentDebugDialog(context);
           return; // stay on checkout; order already exists but isn't marked paid
         }
-        if (!reported) {
+        if (verified == TapChargeOutcome.pending) {
+          // A charge exists but Tap hadn't reached a final state inside the
+          // wait window — it may well be paid. Staying on checkout here
+          // would invite the customer to place the order again and be
+          // charged twice, so this goes on to the order instead, with a
+          // clear "don't pay again" message.
+          showErrorToast(context, t('We couldn\'t confirm your payment yet. If money was deducted, please don\'t pay again — check order #$code or contact support.', 'لم نتمكن من تأكيد الدفع بعد. إذا تم خصم المبلغ فلا تدفع مرة أخرى — راجع الطلب #$code أو تواصل مع الدعم.'));
+          if (TapPaymentService.paymentDebug) {
+            await _showPaymentDebugDialog(context);
+            if (!context.mounted) return;
+          }
+        } else if (!reported) {
           showErrorToast(context, t('Payment went through, but we couldn\'t confirm it with the server. Please check Order details.', 'تمت عملية الدفع، لكن لم نتمكن من تأكيدها مع الخادم. يرجى مراجعة تفاصيل الطلب.'));
           return;
         }
       }
 
       cart.clearCartRemote(auth.userId!);
-      showToast(context, t('Order placed! Tracking #$code', 'تم تقديم الطلب! رقم التتبع #$code'));
+      // Not shown when payment is still unconfirmed — it would immediately
+      // cover the "don't pay again" warning above.
+      if (verified != TapChargeOutcome.pending) {
+        showToast(context, t('Order placed! Tracking #$code', 'تم تقديم الطلب! رقم التتبع #$code'));
+      }
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => TrackScreen(orderId: code)),
         (route) => route.isFirst,
@@ -780,6 +848,69 @@ class _CheckoutBody extends StatelessWidget {
         showErrorToast(context, message);
       }
     }
+  }
+
+  /// Shown when the Tap session ends via cancel. Returns true if the
+  /// customer chose to go to the order instead of staying on checkout.
+  /// Staying and re-placing would create a second order, and — if the
+  /// first payment actually went through at the bank — a second charge.
+  Future<bool?> _showPaymentCancelledDialog(BuildContext context, String code) {
+    final ar = context.read<LocaleState>().isArabic;
+    String t(String en, String arabic) => ar ? arabic : en;
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => Directionality(
+        textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+        child: AlertDialog(
+          title: Text(t('Payment not completed', 'لم تكتمل عملية الدفع')),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(t(
+                  'If your bank shows a deduction, please don\'t pay again — your order #$code is saved and we can confirm it. Otherwise you can try again.',
+                  'إذا ظهر خصم في حسابك البنكي فلا تدفع مرة أخرى — طلبك #$code محفوظ ويمكننا تأكيده. وإلا يمكنك المحاولة مرة أخرى.',
+                )),
+                // Only in test APKs built with --dart-define=PAYMENT_DEBUG=true.
+                if (TapPaymentService.paymentDebug) ..._paymentDebugBlock(),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(t('Try again', 'حاول مرة أخرى'))),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(t('View order', 'عرض الطلب'))),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Raw SDK result + Tap check for the last payment attempt, selectable and
+  /// copyable. Exists so a client testing an APK on their own phone (no PC,
+  /// so no `adb logcat`) can screenshot or paste exactly what happened.
+  /// Gated by [TapPaymentService.paymentDebug]; never shown to customers.
+  List<Widget> _paymentDebugBlock() => [
+        const SizedBox(height: 14),
+        const Text('Test details', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 4),
+        SelectableText(TapPaymentService.instance.lastDiagnostics, style: const TextStyle(fontSize: 11)),
+        TextButton(
+          onPressed: () => Clipboard.setData(ClipboardData(text: TapPaymentService.instance.lastDiagnostics)),
+          child: const Text('Copy details'),
+        ),
+      ];
+
+  Future<void> _showPaymentDebugDialog(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Payment details (test build)'),
+        content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: _paymentDebugBlock())),
+        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close'))],
+      ),
+    );
   }
 
   /// See the catch block in [_placeOrder] above for why this exists —
@@ -962,18 +1093,12 @@ class _CheckoutBody extends StatelessWidget {
     // kept showing in this list as if it still needed tapping.
     final appliedPromotionId = initData?.appliedPromo?.promotionId;
     final active = (initData?.promotions ?? const <Promotion>[]).where((p) => p.isActive && p.id != appliedPromotionId).toList();
-    // Only a genuine typed coupon code can actually be removed —
-    // AccountService.removePromotion requires a `code` string, which an
-    // auto-applied promotion (initData?.appliedPromo) simply doesn't have
-    // (see AppliedPromo's doc). Including that case here would show a
-    // "Remove applied code" button that, on tap, sends an EMPTY code to
-    // that endpoint — confirmed by checking the remove call's own required
-    // parameter, not yet confirmed against a real failed attempt, but
-    // there's no code this could possibly remove either way. If an
-    // auto-applied promotion should be user-removable at all, that needs
-    // its own way to do it (e.g. by promotion_id) — ask backend rather
-    // than guessing one here.
-    final hasApplied = initData?.appliedCouponCode != null;
+    // Backend is adding promotion_id support to the remove endpoint
+    // (reported 2026-09-23) — see AccountService.removePromotion's doc.
+    // Previously this only allowed removing a genuine typed code, since
+    // an auto-applied promotion's removal had no working endpoint at
+    // all; remove() below now sends whichever real identifier applies.
+    final hasApplied = (initData?.appliedCouponCode != null) || (initData?.appliedPromo != null);
 
     showModalBottomSheet(
       context: context,
@@ -1061,13 +1186,11 @@ class _CheckoutBody extends StatelessWidget {
             if (userId == null) return;
             setSheetState(() { checking = true; error = null; });
             try {
-              // hasApplied (which gates the button that calls this) now
-              // only true for a genuine typed code, so this should always
-              // be non-empty in practice — kept as a plain lookup with no
-              // appliedPromo fallback either way, same reasoning as the
-              // other currentCode above.
-              final currentCode = initData?.appliedCouponCode ?? '';
-              final result = await AccountService.instance.removePromotion(userId, code: currentCode, subtotal: subtotal);
+              // Confirmed by backend (2026-09-23): removes whatever's
+              // currently applied for this user, no code or promotion_id
+              // needed at all — works the same whether a typed code or an
+              // auto-applied promotion is what's actually active.
+              final result = await AccountService.instance.removePromotion(userId, subtotal: subtotal);
               if (!result.success) {
                 final msg = result.message ?? t('Couldn\'t remove that offer.', 'تعذر إزالة هذا العرض.');
                 setSheetState(() { checking = false; error = msg; });

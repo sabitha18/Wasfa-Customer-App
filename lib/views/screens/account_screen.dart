@@ -100,15 +100,25 @@ class AccountScreen extends StatelessWidget {
                   gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [AppColors.sky, AppColors.navy]),
                 ),
                 child: Row(children: [
-                  // .av
+                  // .av — shows the real uploaded photo once one exists
+                  // (confirmed live, 2026-09-28), falling back to the
+                  // initial-letter avatar until then.
                   Container(
                     width: 58, height: 58,
-                    decoration: BoxDecoration(color: Colors.white.withOpacity(.2), borderRadius: BorderRadius.circular(17)),
-                    alignment: Alignment.center,
-                    child: Text(
-                      signedIn && auth.user!.name.isNotEmpty ? auth.user!.name[0].toUpperCase() : '?',
-                      style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w700),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(.2),
+                      borderRadius: BorderRadius.circular(17),
+                      image: signedIn && auth.user?.photoUrl != null
+                          ? DecorationImage(image: NetworkImage(auth.user!.photoUrl!), fit: BoxFit.cover)
+                          : null,
                     ),
+                    alignment: Alignment.center,
+                    child: (signedIn && auth.user?.photoUrl != null)
+                        ? null
+                        : Text(
+                            signedIn && auth.user!.name.isNotEmpty ? auth.user!.name[0].toUpperCase() : '?',
+                            style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w700),
+                          ),
                   ),
                   const SizedBox(width: 14),
                   // .me
@@ -310,7 +320,7 @@ Future<void> _callSupport(BuildContext context, bool isArabic) async {
 void _openInfoSheet(BuildContext context, String key, bool isArabic) {
   final titles = {
     'about': isArabic ? 'عن وصفة' : 'About WASFA',
-    'faq': isArabic ? 'الأسئلة الشائعة' : 'FAQ',
+    'faq': isArabic ? 'الأسئلة الشائعة' : 'Frequently Asked Questions',
     'terms': isArabic ? 'الشروط والأحكام' : 'Terms & conditions',
     'privacy': isArabic ? 'سياسة الخصوصية' : 'Privacy policy',
   };
@@ -339,6 +349,10 @@ class _LegalPageSheet extends StatefulWidget {
 
 class _LegalPageSheetState extends State<_LegalPageSheet> {
   late Future<LegalPage> _future = AccountService.instance.page(widget.slug);
+  // Which FAQ entries are currently expanded — starts empty (all
+  // collapsed), matching the reference design: a question + a "+" that
+  // flips to "−" on tap, more than one can be open at once independently.
+  final Set<int> _expandedFaq = {};
 
   @override
   Widget build(BuildContext context) {
@@ -398,24 +412,21 @@ class _LegalPageSheetState extends State<_LegalPageSheet> {
                         // structured Q&A list now, not the single HTML blob
                         // the other 4 Legal slugs still use — checked first
                         // since content/contentAr are empty for this page.
+                        // Was a flat always-expanded list; rebuilt as a real
+                        // accordion per a provided reference design — each
+                        // question collapsed by default with a "+"/"−"
+                        // toggle, independently expandable (more than one
+                        // can be open at once), divider between entries.
                         if (page.faqs.isNotEmpty)
                           for (var i = 0; i < page.faqs.length; i++)
-                            Padding(
-                              padding: EdgeInsets.only(bottom: i == page.faqs.length - 1 ? 0 : 18),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    page.faqs[i].questionFor(widget.isArabic),
-                                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.navy, height: 1.4),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    page.faqs[i].answerFor(widget.isArabic),
-                                    style: const TextStyle(fontSize: 13.5, color: AppColors.ink, height: 1.6),
-                                  ),
-                                ],
-                              ),
+                            _FaqAccordionItem(
+                              question: page.faqs[i].questionFor(widget.isArabic),
+                              answer: page.faqs[i].answerFor(widget.isArabic),
+                              expanded: _expandedFaq.contains(i),
+                              isLast: i == page.faqs.length - 1 && !hasContact,
+                              onTap: () => setState(() {
+                                if (!_expandedFaq.add(i)) _expandedFaq.remove(i);
+                              }),
                             )
                         else
                           HtmlBlocks(html: page.contentFor(widget.isArabic)),
@@ -454,6 +465,50 @@ class _ContactRow extends StatelessWidget {
         const SizedBox(width: 8),
         Expanded(child: Text(text, style: const TextStyle(fontSize: 13, color: AppColors.ink, height: 1.4))),
       ]),
+    );
+  }
+}
+
+/// One collapsible FAQ row — question + a "+"/"−" toggle, answer only
+/// shown while expanded, divider below (matching the provided reference
+/// design). Kept as plain text for the answer, per an explicit "keep it
+/// as text" — a URL appearing inside one doesn't get made tappable.
+class _FaqAccordionItem extends StatelessWidget {
+  final String question;
+  final String answer;
+  final bool expanded;
+  final bool isLast;
+  final VoidCallback onTap;
+  const _FaqAccordionItem({required this.question, required this.answer, required this.expanded, required this.isLast, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 13),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(question, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.navy, height: 1.35)),
+                ),
+                const SizedBox(width: 10),
+                Icon(expanded ? Icons.remove_rounded : Icons.add_rounded, size: 19, color: AppColors.muted),
+              ],
+            ),
+          ),
+        ),
+        if (expanded)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 13),
+            child: Text(answer, style: const TextStyle(fontSize: 13.5, color: AppColors.ink, height: 1.6)),
+          ),
+        if (!isLast) const Divider(color: AppColors.line, height: 1),
+      ],
     );
   }
 }

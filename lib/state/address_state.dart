@@ -219,18 +219,30 @@ class AddressState extends ChangeNotifier {
       }
     }
 
-    // Used to auto-switch to a saved address here whenever it shared the
-    // exact same governorate/area as the GPS fix (see git history /
-    // _preferSavedAddressForArea, since removed) — reasoning being a saved
-    // address always has fuller delivery details (block/street/building)
-    // than a bare GPS point. Explicitly reversed on request: "Current
-    // location" must always stay its own separate, editable entry, even
-    // when it happens to sit in the same catalog area as a saved address
-    // like "Work" — those can still be two genuinely different physical
-    // spots that just share a broad area code, and silently substituting
-    // one for the other meant editing "current location" could actually
-    // open and overwrite an unrelated saved address without any obvious
-    // sign that had happened.
+    // Re-added (2026-09-23) after an earlier removal — see git history for
+    // why it was pulled before: editing "current location" used to risk
+    // silently opening and overwriting an unrelated saved address. That
+    // specific danger is fixed separately now (editing current location
+    // always creates a new entry, never touches an existing saved one),
+    // so the remaining trade-off was purely convenience-vs-accuracy,
+    // decided explicitly this time: a saved address always has fuller
+    // delivery details (block/street/building) than a bare GPS point, so
+    // when one already exists for the exact area GPS just resolved to,
+    // use it directly rather than making the person deal with "address
+    // block is required" for an area they already have a complete saved
+    // address for. select() sets useCurrentLocation = false, which also
+    // means this method's own guard at the top naturally stops it from
+    // re-triggering on the next GPS ping — it only fires again if
+    // "Current location" gets explicitly re-selected afterward.
+    if (matchedArea != null) {
+      for (var i = 0; i < addresses.length; i++) {
+        if (addresses[i].areaId == matchedArea.id) {
+          select(i);
+          return;
+        }
+      }
+    }
+
     final previousAreaId = currentLocationAddress?.areaId;
     currentLocationAddress = Address(
       title: 'Current location',

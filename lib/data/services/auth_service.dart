@@ -50,16 +50,10 @@ class AuthService {
 
   /// Fetches the full profile — same shape as the `user` object `saveProfile`
   /// returns/sends (civil id, dob, gender, nationality, weight, height,
-  /// blood type, emergency contact). ✅ confirmed live in the updated
-  /// Postman collection (`GET /acct/profile?user_id=`) — this was built
-  /// earlier as a best-guess but never actually called anywhere; now wired
-  /// into the profile screen's initState so it shows real server data
-  /// instead of only whatever's cached on this device.
+  /// blood type, emergency contact, profile_pic). ✅ Confirmed live
+  /// (2026-09-28): wraps in `{"user": {...}}`, same as the save response.
   Future<AppUser> fetchProfile(int userId) async {
     final res = await _client.get(ApiConfig.acctProfile, query: {'user_id': userId});
-    // Not confirmed by the collection (no saved example) whether this wraps
-    // in {"user": {...}} like the POST response does, or returns the
-    // fields directly — handle both.
     final userJson = (res is Map && res['user'] is Map) ? res['user'] as Map<String, dynamic> : (res as Map<String, dynamic>);
     return AppUser.fromJson(userJson);
   }
@@ -74,6 +68,12 @@ class AuthService {
   /// original API contract (only civil id/dob/gender/nationality were) —
   /// sent here as best-guess snake_case keys matching the rest; confirm
   /// with backend if the profile save doesn't end up round-tripping them.
+  ///
+  /// ✅ Confirmed live (2026-09-28): this same endpoint now takes an
+  /// optional `image` file as part of a real `multipart/form-data`
+  /// request (previously plain JSON) — not a separate upload endpoint.
+  /// [imagePath] (a local file path from image_picker) uploads/replaces
+  /// the profile photo in the same call as any other profile edit.
   Future<AppUser> saveProfile({
     required int userId,
     required String firstName,
@@ -90,24 +90,30 @@ class AuthService {
     String? emergName,
     String? emergRel,
     String? emergPhone,
+    String? imagePath,
   }) async {
-    final res = await _client.post(ApiConfig.acctProfile, body: {
-      'user_id': userId,
-      'first_name': firstName,
-      'last_name': lastName,
-      if (email != null) 'email': email,
-      if (phone != null) 'phone': phone,
-      if (civilId != null) 'civil_id': civilId,
-      if (dateOfBirth != null) 'date_of_birth': dateOfBirth,
-      if (gender != null) 'gender': gender,
-      if (nationality != null) 'nationality': nationality,
-      if (weight != null) 'weight': weight,
-      if (height != null) 'height': height,
-      if (bloodType != null) 'blood_type': bloodType,
-      if (emergName != null) 'emergency_name': emergName,
-      if (emergRel != null) 'emergency_relation': emergRel,
-      if (emergPhone != null) 'emergency_phone': emergPhone,
-    });
+    final res = await _client.postMultipart(
+      ApiConfig.acctProfile,
+      fields: {
+        'user_id': userId.toString(),
+        'first_name': firstName,
+        'last_name': lastName,
+        if (email != null) 'email': email,
+        if (phone != null) 'phone': phone,
+        if (civilId != null) 'civil_id': civilId,
+        if (dateOfBirth != null) 'date_of_birth': dateOfBirth,
+        if (gender != null) 'gender': gender,
+        if (nationality != null) 'nationality': nationality,
+        if (weight != null) 'weight': weight.toString(),
+        if (height != null) 'height': height.toString(),
+        if (bloodType != null) 'blood_type': bloodType,
+        if (emergName != null) 'emergency_name': emergName,
+        if (emergRel != null) 'emergency_relation': emergRel,
+        if (emergPhone != null) 'emergency_phone': emergPhone,
+      },
+      filePath: imagePath,
+      fileField: 'image',
+    );
     // Confirmed live: the server only ever echoes back {id, name, phone,
     // email} in `user`, even when civil_id/dob/gender/nationality/weight/
     // height/blood_type/emergency_* were sent and accepted (200 OK). Since
@@ -134,6 +140,7 @@ class AuthService {
       emergName: server?.emergName ?? emergName,
       emergRel: server?.emergRel ?? emergRel,
       emergPhone: server?.emergPhone ?? emergPhone,
+      photoUrl: server?.photoUrl,
     );
   }
 }

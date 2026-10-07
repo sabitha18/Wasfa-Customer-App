@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/theme/app_colors.dart';
@@ -12,9 +15,10 @@ import '../widgets/toast.dart';
 
 /// Matches the HTML's `rProfile()`:
 /// - `.phead` — back + "Profile" title (t('profile_title')) → [PageHeader].
-/// - `.prof-hero` — circular gradient avatar (photo swap isn't wired up;
-///   see the camera-button note below) + name + "age · sex · blood type"
-///   subtitle.
+/// - `.prof-hero` — circular gradient avatar (✅ photo upload confirmed live
+///   2026-09-28 — see the camera-button/[_pickPhoto] note below; falls back
+///   to the initial-letter avatar until a real photo exists) + name +
+///   "age · sex · blood type" subtitle.
 /// - Three `.prof-card`s — "Personal information", "Health information",
 ///   "Emergency contact" — each a bordered white card with a section label
 ///   and `.afield`/`.arow` inputs.
@@ -45,6 +49,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String? _gender; // 'Male' | 'Female' | 'Other'
   String? _bloodType;
   bool _saving = false;
+  // Local file, picked but not yet uploaded — uploads together with the
+  // rest of the form on "Save profile" (see saveProfile's imagePath).
+  File? _pickedImage;
 
   static const _bloodTypes = ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'];
 
@@ -133,6 +140,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return n.isNotEmpty ? n[0].toUpperCase() : '?';
   }
 
+  /// Gallery, not camera directly — matches the existing pattern this app
+  /// already uses for the same choice elsewhere (return-request photos),
+  /// and avoids needing a separate camera permission prompt just for this.
+  Future<void> _pickPhoto() async {
+    final picked = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 85, maxWidth: 1024);
+    if (picked != null) setState(() => _pickedImage = File(picked.path));
+  }
+
   Future<void> _pickDob() async {
     final now = DateTime.now();
     final picked = await showDatePicker(
@@ -176,6 +191,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         emergName: _emergName.text.trim().isEmpty ? null : _emergName.text.trim(),
         emergRel: _emergRel.text.trim().isEmpty ? null : _emergRel.text.trim(),
         emergPhone: _emergPhone.text.trim().isEmpty ? null : _emergPhone.text.trim(),
+        imagePath: _pickedImage?.path,
       );
       if (!mounted) return;
       await auth.refreshUser(updated);
@@ -422,14 +438,38 @@ class _ProfileScreenState extends State<ProfileScreen> {
               Stack(clipBehavior: Clip.none, children: [
                 Container(
                   width: 92, height: 92,
-                  decoration: BoxDecoration(gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [AppColors.sky, AppColors.navy]), shape: BoxShape.circle, boxShadow: AppColors.sh),
+                  decoration: BoxDecoration(
+                    gradient: _pickedImage == null && (context.watch<AuthState>().user?.photoUrl == null)
+                        ? const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [AppColors.sky, AppColors.navy])
+                        : null,
+                    shape: BoxShape.circle,
+                    boxShadow: AppColors.sh,
+                    image: _pickedImage != null
+                        ? DecorationImage(image: FileImage(_pickedImage!), fit: BoxFit.cover)
+                        : (context.watch<AuthState>().user?.photoUrl != null
+                            ? DecorationImage(image: NetworkImage(context.watch<AuthState>().user!.photoUrl!), fit: BoxFit.cover)
+                            : null),
+                  ),
                   alignment: Alignment.center,
-                  child: Text(_profInitial(), style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.w700)),
+                  // Only shown as a fallback — hidden the moment there's a
+                  // real picked or server photo to display instead, since
+                  // it'd otherwise sit underneath/behind the actual image.
+                  child: (_pickedImage == null && context.watch<AuthState>().user?.photoUrl == null)
+                      ? Text(_profInitial(), style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.w700))
+                      : null,
                 ),
                 Positioned(
                   bottom: -2, right: -2,
                   child: InkWell(
-                    onTap: () => showToast(context, t("Photo upload isn't available yet", 'رفع الصورة غير متاح حالياً')),
+                    // ✅ Confirmed live (2026-09-28): /acct/profile's save
+                    // request now takes a real `image` file — this used to
+                    // be a "not available yet" stub since no such field
+                    // existed at all. Picks locally and shows it
+                    // immediately (setState below) — actually uploading it
+                    // happens together with the rest of the form on "Save
+                    // profile", same as every other field here, rather
+                    // than as a separate upload step.
+                    onTap: _pickPhoto,
                     borderRadius: BorderRadius.circular(15),
                     child: Container(
                       width: 30, height: 30,

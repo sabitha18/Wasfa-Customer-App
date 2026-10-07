@@ -72,7 +72,14 @@ class PharmacyStore {
       // which looked exactly like a real estimate. Left genuinely empty
       // now; callers show "ETA unavailable" instead (see home_screen.dart).
       eta: eta,
-      fast: asBool(json, const ['fast']),
+      // The API has never sent a `fast` field (the confirmed /app/stores
+      // shape is {id, name, name_ar, area, category, products, eta, free,
+      // pro, offers, seller, distance_km, logo}), so this was always false
+      // and the "Under 30 mins" chip showed "No stores found" even while
+      // cards read 15-25 mins. Now derived from the same `eta` string the
+      // card displays, so the filter and the card can't disagree. A real
+      // `fast` key, if backend ever adds one, still takes priority.
+      fast: json.containsKey('fast') ? asBool(json, const ['fast']) : _isUnder30(eta),
       pro: asBool(json, const ['pro']),
       // Real key is `free` (bool). Kept the old candidates too in case an
       // older/alternate response shape is ever hit. Defaults to false (not
@@ -92,6 +99,21 @@ class PharmacyStore {
       gradient: _gradientFor(name),
       monogram: monogram.isNotEmpty ? monogram : (name.isNotEmpty ? name[0].toUpperCase() : '℞'),
     );
+  }
+
+  /// Slowest minute in an ETA like "15-25 mins" or "30-45" — null when
+  /// there's no number at all (the live endpoint sends '' with no ETA).
+  static int? etaUpperMinutes(String eta) {
+    final nums = RegExp(r'\d+').allMatches(eta).map((m) => int.parse(m.group(0)!));
+    return nums.isEmpty ? null : nums.reduce((a, b) => a > b ? a : b);
+  }
+
+  /// "Under 30 mins" = even the slow end of the range is 30 or less, so the
+  /// chip never promises faster than the card's own estimate. No ETA at all
+  /// is NOT treated as fast.
+  static bool _isUnder30(String eta) {
+    final upper = etaUpperMinutes(eta);
+    return upper != null && upper <= 30;
   }
 
   static const List<List<Color>> _paletteGradients = [
