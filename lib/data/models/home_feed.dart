@@ -65,10 +65,16 @@ class HomeBannerButton {
 /// a real banner had `link_type: "category"`, `link_ref: 540`,
 /// `link_target: "Air Filters & Humidifiers"` — a SEPARATE destination
 /// for the banner/image itself, distinct from whatever a `buttons[]`
-/// entry's own `link` points to. Only `"category"` is confirmed so far;
-/// _BannerCard in home_screen.dart falls back to the button's plain
-/// `link` for any other/missing `link_type`, rather than guessing a
-/// mapping for types that haven't actually been confirmed yet.
+/// entry's own `link` points to. Confirmed live types (2026-10-07):
+/// `"category"`, `"brand"`, `"seller"` — `link_ref` is that thing's id,
+/// `link_target` its display name. The image only acts on them when
+/// `image_clickable` is on; the button has its own independent link.
+///
+/// `"product"` also exists. Its `link_ref` is read as TEXT ([linkRefText]) —
+/// the product SKU the API team is going to send (the product page loads by
+/// SKU; a product id doesn't work: `GET /app/product/109803` -> 404). The
+/// numeric [linkRef] is only for category/brand/seller ids, and would drop a
+/// SKU like "a16346". See openProductFromBanner and _BannerCard.
 class HomeBanner {
   final String title;
   final String sub;
@@ -78,6 +84,9 @@ class HomeBanner {
   final bool imageClickable;
   final String? linkType;
   final int? linkRef;
+  /// `link_ref` exactly as sent, as text — for `product` banners, where it's a
+  /// SKU that a whole-number parse would throw away.
+  final String? linkRefText;
   final String? linkTarget;
 
   const HomeBanner({
@@ -89,6 +98,7 @@ class HomeBanner {
     this.imageClickable = false,
     this.linkType,
     this.linkRef,
+    this.linkRefText,
     this.linkTarget,
   });
 
@@ -101,6 +111,7 @@ class HomeBanner {
         imageClickable: asBool(json, const ['image_clickable']),
         linkType: asStringOrNull(json, const ['link_type']),
         linkRef: asIntOrNull(json, const ['link_ref']),
+        linkRefText: asNonEmptyStringOrNull(json, const ['link_ref']),
         linkTarget: asStringOrNull(json, const ['link_target']),
       );
 }

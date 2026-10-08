@@ -6,13 +6,16 @@ import '../../core/utils/address_geocoder.dart';
 import '../../core/widgets/async_state_view.dart';
 import '../../data/models/home_feed.dart';
 import '../../data/models/pharmacy_store.dart';
+import '../../data/repositories/catalog_repository.dart';
 import '../../state/address_state.dart';
 import '../../state/locale_state.dart';
 import '../../state/location_state.dart';
 import '../../viewmodels/home_view_model.dart';
 import '../../viewmodels/shop_view_model.dart';
 import 'shop_screen.dart';
+import '../widgets/open_product.dart';
 import '../widgets/section_header.dart';
+import '../widgets/store_avatar.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -269,28 +272,72 @@ class _BannerCard extends StatelessWidget {
   final HomeBanner banner;
   const _BannerCard({required this.banner});
 
+  /// Where tapping the IMAGE goes. Null (not tappable) unless the admin
+  /// turned on "image clickable" AND picked a destination this app knows.
+  /// Confirmed live link types (2026-10-07): `category`, `brand`, `seller`,
+  /// each with `link_ref` = that thing's real id and `link_target` = its
+  /// display name. `product` also exists (type name confirmed by the
+  /// client): `link_ref` is the product's SKU (read as text) and
+  /// `link_target` its name — see [openProductFromBanner]. Any other type is
+  /// simply not tappable rather than sending someone somewhere wrong.
+  VoidCallback? _imageTap(BuildContext context) {
+    if (!banner.imageClickable) return null;
+    final target = banner.linkTarget ?? '';
+    // A product banner's link_ref is a SKU — text, not a whole number — so it
+    // is read as text and handled BEFORE the numeric-id guard below, which
+    // would reject a SKU like "a16346" and leave the banner dead.
+    if (banner.linkType == 'product') {
+      final sku = banner.linkRefText;
+      return sku == null ? null : () => openProductFromBanner(context, sku, target);
+    }
+    final ref = banner.linkRef;
+    if (ref == null) return null;
+    switch (banner.linkType) {
+      case 'category':
+        return () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => ShopScreen(initialFilter: ShopFilter(category: target.isEmpty ? null : target, categoryId: ref))),
+            );
+      case 'brand':
+        return () => Navigator.push(
+              context,
+              // The name is what the brand chip shows; the real id is
+              // sent to the server directly (ShopFilter.brandId).
+              MaterialPageRoute(builder: (_) => ShopScreen(initialFilter: ShopFilter(brand: target.isEmpty ? 'Brand #$ref' : target, brandId: ref))),
+            );
+      case 'seller':
+        return () {
+          // `link_ref` is matched against /app/stores' `id` (the shop's
+          // user_id). Opens that store's page when it's in the loaded list;
+          // otherwise falls back to browsing that store's products.
+          final match = CatalogRepository.instance.stores.where((st) => st.id == ref);
+          if (match.isNotEmpty) {
+            Navigator.pushNamed(context, Routes.store, arguments: match.first);
+          } else {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => ShopScreen(initialFilter: ShopFilter(pharmacy: target.isEmpty ? null : target, shopId: ref))),
+            );
+          }
+        };
+      default:
+        return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasText = banner.title.isNotEmpty || banner.sub.isNotEmpty || banner.buttons.isNotEmpty;
-    // Tappable whenever the API actually gives us somewhere to go. Prefers
-    // the banner's own structured link_type/link_ref (a real category id,
-    // confirmed live 2026-09-22 — see HomeBanner's doc) over a button's
-    // plain link string when both exist, since the structured one points
-    // at something specific and confirmed rather than a generic web path
-    // that may or may not encode the same destination. Falls back to a
-    // button's own link (or, with no button but the image marked
-    // clickable, that same first-button link) for any banner without a
-    // recognized link_type. If neither exists, the banner just isn't
-    // tappable rather than guessing a destination that was never specified.
-    final link = banner.buttons.isNotEmpty ? banner.buttons.first.link : null;
-    final VoidCallback? onTap = (banner.linkType == 'category' && banner.linkRef != null)
-        ? () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => ShopScreen(initialFilter: ShopFilter(category: banner.linkTarget, categoryId: banner.linkRef))),
-            )
-        : (link != null && link.isNotEmpty)
-            ? () => _openBannerLink(context, link)
-            : null;
+    // REWORKED (2026-10-07) after a client report that "image clickable"
+    // banners did nothing: the admin lets you make the IMAGE clickable
+    // (pick a category / brand / seller) and/or add a BUTTON with its own
+    // link — two independent tap targets. Before, one tap handler covered
+    // the whole card, `image_clickable` was parsed but never read, and
+    // only link_type "category" was understood, so brand/seller banners
+    // were dead taps. Now: the image goes to its link_type destination
+    // (only when image_clickable is on), and the button pill goes to the
+    // button's own link.
+    final VoidCallback? onTap = _imageTap(context);
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(AppRadius.card),
@@ -345,10 +392,17 @@ class _BannerCard extends StatelessWidget {
                       ],
                       if (banner.buttons.isNotEmpty) ...[
                         const SizedBox(height: 10),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
-                          child: Text(banner.buttons.first.text, style: const TextStyle(color: AppColors.navy, fontWeight: FontWeight.w700, fontSize: 12)),
+                        // The button is its own tap target with its own link,
+                        // separate from the image's link_type destination.
+                        // No link -> null onTap, so the tap falls through to
+                        // the image's handler instead of being swallowed.
+                        GestureDetector(
+                          onTap: banner.buttons.first.link.isEmpty ? null : () => _openBannerLink(context, banner.buttons.first.link),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
+                            child: Text(banner.buttons.first.text, style: const TextStyle(color: AppColors.navy, fontWeight: FontWeight.w700, fontSize: 12)),
+                          ),
                         ),
                       ],
                     ],
@@ -480,52 +534,6 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
-/// Shows [PharmacyStore.logoUrl] when the backend eventually sends one;
-/// falls back to the existing gradient+monogram square otherwise (today,
-/// always — see the field's doc comment in pharmacy_store.dart). A failed
-/// image load falls back the same way rather than showing a broken-image
-/// icon, matching ProductImage's pattern elsewhere in the app.
-class _StoreAvatar extends StatelessWidget {
-  final PharmacyStore store;
-  final double size;
-  final double borderRadius;
-  final double fontSize;
-  final List<BoxShadow>? boxShadow;
-  const _StoreAvatar({required this.store, required this.size, required this.borderRadius, required this.fontSize, this.boxShadow});
-
-  @override
-  Widget build(BuildContext context) {
-    final monogramBox = Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(colors: store.gradient, begin: Alignment.topLeft, end: Alignment.bottomRight),
-        borderRadius: BorderRadius.circular(borderRadius),
-        boxShadow: boxShadow,
-      ),
-      alignment: Alignment.center,
-      child: Text(store.monogram, style: TextStyle(color: Colors.white, fontSize: fontSize, fontWeight: FontWeight.w800)),
-    );
-    final logo = store.logoUrl;
-    if (logo == null || logo.isEmpty) return monogramBox;
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(borderRadius: BorderRadius.circular(borderRadius), boxShadow: boxShadow),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(borderRadius),
-        child: Image.network(
-          logo,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => monogramBox,
-        ),
-      ),
-    );
-  }
-}
-
 class _NearStoreCard extends StatelessWidget {
   final PharmacyStore store;
   const _NearStoreCard({required this.store});
@@ -547,7 +555,7 @@ class _NearStoreCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _StoreAvatar(store: store, size: 46, borderRadius: 13, fontSize: 22),
+            StoreAvatar(store: store, size: 46, borderRadius: 13, fontSize: 22),
             const SizedBox(height: 7),
             // .nc-nm — no line clamp in the CSS; min-height just keeps cards
             // even for short names, names can wrap to 2-3 lines naturally.
@@ -615,7 +623,7 @@ class _StoreRow extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            _StoreAvatar(store: store, size: 58, borderRadius: 15, fontSize: 24, boxShadow: AppColors.shSm),
+            StoreAvatar(store: store, size: 58, borderRadius: 15, fontSize: 24, boxShadow: AppColors.shSm),
             const SizedBox(width: 13),
             Expanded(
               child: Column(

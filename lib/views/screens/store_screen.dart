@@ -12,7 +12,9 @@ import '../../state/locale_state.dart';
 import '../../viewmodels/shop_view_model.dart';
 import '../../viewmodels/store_view_model.dart';
 import '../widgets/app_bottom_nav.dart';
+import '../widgets/store_avatar.dart';
 import '../widgets/app_top_bar.dart';
+import '../widgets/open_product.dart';
 import '../widgets/product_card.dart';
 import '../widgets/section_header.dart';
 import 'brands_screen.dart';
@@ -98,34 +100,29 @@ class _StoreBody extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 12),
-                          // .st-logo
-                          Container(
-                            width: 42,
-                            height: 42,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(colors: store.gradient, begin: Alignment.topLeft, end: Alignment.bottomRight),
-                              borderRadius: BorderRadius.circular(11),
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(store.monogram, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
-                          ),
+                          // .st-logo — the store's real logo (`logo` from
+                          // /app/stores) when it has one, monogram otherwise.
+                          StoreAvatar(store: store, size: 42, borderRadius: 11, fontSize: 18),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: AppColors.navy, height: 1.2)),
                           ),
                         ],
                       ),
-                      // .freedel
-                      Padding(
-                        padding: const EdgeInsets.only(top: 10, bottom: 2),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.electric_moped, size: 16, color: AppColors.freeDeliveryOrange),
-                            const SizedBox(width: 7),
-                            Text(t('Free delivery on your next order', 'توصيل مجاني لطلبك القادم'), style: const TextStyle(color: AppColors.freeDeliveryOrange, fontSize: 13, fontWeight: FontWeight.w700)),
-                          ],
+                      // .freedel — only when this store actually has free
+                      // delivery on (`free` from /app/stores). Was always
+                      // shown, whatever the store's real value was.
+                      if (store.freeDelivery)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 10, bottom: 2),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.electric_moped, size: 16, color: AppColors.freeDeliveryOrange),
+                              const SizedBox(width: 7),
+                              Text(t('Free delivery on your next order', 'توصيل مجاني لطلبك القادم'), style: const TextStyle(color: AppColors.freeDeliveryOrange, fontSize: 13, fontWeight: FontWeight.w700)),
+                            ],
+                          ),
                         ),
-                      ),
                     ],
                   ),
                 ),
@@ -240,31 +237,33 @@ class _StoreBody extends StatelessWidget {
                     itemBuilder: (context, i) {
                       final name = vm.brandsInStore[i];
                       final logo = vm.brandLogosInStore[name];
-                      return GestureDetector(
-                        onTap: () => _openShop(context, brand: name),
-                        child: Container(
-                          constraints: const BoxConstraints(minWidth: 92),
-                          padding: EdgeInsets.symmetric(horizontal: logo != null ? 10 : 14),
-                          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(13), boxShadow: AppColors.shSm),
-                          alignment: Alignment.center,
-                          child: logo != null
-                              ? Row(mainAxisSize: MainAxisSize.min, children: [
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: _BrandLogo(
-                                      url: logo,
-                                      size: 34,
-                                      // Falls back to the plain text-only look
-                                      // (no logo) if the URL fails to load —
-                                      // wrong format, bad file, network error
-                                      // — rather than a broken-image icon.
-                                      fallback: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 13)),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Flexible(child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 13))),
-                                ])
-                              : Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 13)),
+                      const nameStyle = TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 13);
+                      final nameText = Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: nameStyle);
+                      return Semantics(
+                        // The name isn't drawn when there's a logo, so screen
+                        // readers still need it.
+                        label: name,
+                        button: true,
+                        child: GestureDetector(
+                          onTap: () => _openShop(context, brand: name),
+                          child: Container(
+                            constraints: const BoxConstraints(minWidth: 92),
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(13), boxShadow: AppColors.shSm),
+                            alignment: Alignment.center,
+                            // A brand with a logo shows ONLY the logo (no
+                            // name next to it); one without keeps the name.
+                            // `contain` so a wide logo isn't cropped to a
+                            // square the way it used to be. If the image
+                            // fails to load it falls back to the name, not a
+                            // broken-image icon.
+                            child: logo != null
+                                ? ClipRRect(
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: _BrandLogo(url: logo, width: 96, height: 40, fit: BoxFit.contain, fallback: nameText),
+                                  )
+                                : nameText,
+                          ),
                         ),
                       );
                     },
@@ -300,9 +299,11 @@ class _StoreBody extends StatelessWidget {
 /// format — backend may not be consistent about it across brands.
 class _BrandLogo extends StatelessWidget {
   final String url;
-  final double size;
+  final double width;
+  final double height;
+  final BoxFit fit;
   final Widget fallback;
-  const _BrandLogo({required this.url, required this.size, required this.fallback});
+  const _BrandLogo({required this.url, required this.width, required this.height, this.fit = BoxFit.cover, required this.fallback});
 
   @override
   Widget build(BuildContext context) {
@@ -310,18 +311,18 @@ class _BrandLogo extends StatelessWidget {
     if (path.endsWith('.svg')) {
       return SvgPicture.network(
         url,
-        width: size,
-        height: size,
-        fit: BoxFit.cover,
-        placeholderBuilder: (_) => SizedBox(width: size, height: size),
+        width: width,
+        height: height,
+        fit: fit,
+        placeholderBuilder: (_) => SizedBox(width: width, height: height),
         errorBuilder: (_, __, ___) => fallback,
       );
     }
     return Image.network(
       url,
-      width: size,
-      height: size,
-      fit: BoxFit.cover,
+      width: width,
+      height: height,
+      fit: fit,
       errorBuilder: (_, __, ___) => fallback,
     );
   }
@@ -408,11 +409,15 @@ class _SellerBannerCard extends StatelessWidget {
     final showDescription = banner.description.isNotEmpty && banner.description != banner.title;
     final showButton = banner.buttonShow && banner.buttonText.isNotEmpty;
     final hasText = banner.title.isNotEmpty || showDescription || showButton;
+    // Tappable with a button (as before) OR when the admin picked a real
+    // destination, even with no button — otherwise a banner linked to a
+    // category/brand/product but shown image-only was a dead tap.
+    final tappable = showButton || sellerBannerHasDestination(banner);
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(AppRadius.card),
       child: GestureDetector(
-        onTap: showButton ? () => _openSellerBannerDestination(context, banner, store) : null,
+        onTap: tappable ? () => _openSellerBannerDestination(context, banner, store) : null,
         child: Container(
           decoration: BoxDecoration(color: AppColors.blush, boxShadow: AppColors.shSm),
           child: Stack(
@@ -477,13 +482,46 @@ class _SellerBannerCard extends StatelessWidget {
   }
 }
 
-/// Only `link_type: "none"` has been seen in a real response so far — for
-/// that AND any other not-yet-confirmed value, falls back to opening this
-/// banner's own store's Shop listing (a reasonable destination for a
-/// button on that store's own banner, not a guess at an unrelated one),
-/// rather than doing nothing or inventing a mapping for link types that
-/// haven't actually been confirmed yet.
+/// Link types handled on a SELLER banner, mirroring what Home banners
+/// confirmed live (2026-10-07): `category`, `brand`, `product`, with
+/// `link_id` = that thing's id and `link_label` = its name. In a real
+/// SELLER-banner response: `none`, `brand` and `product` are confirmed
+/// (2026-10-07); `category` is assumed to follow the same shape. Anything
+/// unrecognised keeps the old behaviour (below) instead of failing.
+bool sellerBannerHasDestination(SellerBanner b) =>
+    (b.linkType == 'product' && b.linkIdText != null) ||
+    (b.linkId != null && (b.linkType == 'category' || b.linkType == 'brand'));
+
+/// category/brand open this store's Shop listing narrowed to that
+/// category/brand (it's this store's own banner, so it stays inside this
+/// store); product opens the product page directly. `none` and anything
+/// not recognised falls back to the previous behaviour — this store's whole
+/// Shop listing — rather than doing nothing or guessing.
 void _openSellerBannerDestination(BuildContext context, SellerBanner banner, PharmacyStore store) {
+  final id = banner.linkId;
+  final label = (banner.linkLabel ?? '').trim();
+  // A product banner's link_id is a SKU — text, not a whole number — so it's
+  // handled before the numeric-id guard below, which would drop e.g. "a16346".
+  if (banner.linkType == 'product' && banner.linkIdText != null) {
+    openProductFromBanner(context, banner.linkIdText!, label);
+    return;
+  }
+  if (id != null) {
+    switch (banner.linkType) {
+      case 'category':
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => ShopScreen(initialFilter: ShopFilter(category: label.isEmpty ? null : label, categoryId: id, pharmacy: store.seller, shopId: store.id))),
+        );
+        return;
+      case 'brand':
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => ShopScreen(initialFilter: ShopFilter(brand: label.isEmpty ? 'Brand #$id' : label, brandId: id, pharmacy: store.seller, shopId: store.id))),
+        );
+        return;
+    }
+  }
   Navigator.push(
     context,
     MaterialPageRoute(builder: (_) => ShopScreen(initialFilter: ShopFilter(pharmacy: store.seller, shopId: store.id))),

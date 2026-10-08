@@ -26,6 +26,15 @@ String? asStringOrNull(Map<String, dynamic> json, List<String> keys) {
   return v?.toString();
 }
 
+/// Like [asStringOrNull], but trimmed, with an empty value treated as absent.
+/// Used for values that can legitimately arrive as a number OR text (a
+/// banner's `link_ref`/`link_id` is a numeric id for categories/brands but a
+/// SKU like "a16346" for products).
+String? asNonEmptyStringOrNull(Map<String, dynamic> json, List<String> keys) {
+  final s = asStringOrNull(json, keys)?.trim();
+  return (s == null || s.isEmpty) ? null : s;
+}
+
 int asInt(Map<String, dynamic> json, List<String> keys, {int fallback = 0}) {
   final v = _firstPresent(json, keys);
   if (v is int) return v;

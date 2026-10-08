@@ -22,6 +22,12 @@ class ShopFilter {
   /// can well be) would never resolve to an id that way at all.
   final int? categoryId;
   final String? brand;
+  /// Real brand id, for callers that already have one (a home banner's
+  /// `link_ref`) — sent to the server directly instead of being looked up
+  /// by NAME against whatever products happen to be loaded, which can't
+  /// resolve a brand none of the loaded products belong to. Needs [brand]
+  /// too (the name is what the chip shows/toggles).
+  final int? brandId;
   /// Store id (the shop's `user_id`) to filter the listing to a single store
   /// via `GET /app/products?shop=<id>`. Null = browse the whole catalogue.
   final int? shopId;
@@ -31,7 +37,7 @@ class ShopFilter {
   /// section's products, instead of the full store catalogue.
   final bool offersOnly;
   final bool bestSellersOnly;
-  const ShopFilter({this.pharmacy, this.category, this.categoryId, this.brand, this.shopId, this.offersOnly = false, this.bestSellersOnly = false});
+  const ShopFilter({this.pharmacy, this.category, this.categoryId, this.brand, this.brandId, this.shopId, this.offersOnly = false, this.bestSellersOnly = false});
 }
 
 class ShopViewModel extends ChangeNotifier {
@@ -81,6 +87,10 @@ class ShopViewModel extends ChangeNotifier {
   String view = 'grid'; // grid | list
   String sort = 'pop'; // pop | low | high | rated
   List<String> brands = [];
+  // Brand name -> real id, for brands handed in with an id already (see
+  // ShopFilter.brandId). Keyed by name so deselecting the chip drops the id
+  // too, like any other brand.
+  final Map<String, int> _brandIdByName = {};
   bool inStock = false;
   bool offersOnly = false;
   /// "Show best-sellers first" — see [_apiSort]'s doc: there's no separate
@@ -125,7 +135,10 @@ class ShopViewModel extends ChangeNotifier {
       // doc) survives even when the name is a deep subcategory the
       // top-level-only search could never have resolved on its own.
       categoryId = initial.categoryId;
-      if (initial.brand != null) brands = [initial.brand!];
+      if (initial.brand != null) {
+        brands = [initial.brand!];
+        if (initial.brandId != null) _brandIdByName[initial.brand!] = initial.brandId!;
+      }
       offersOnly = initial.offersOnly;
       bestSellersOnly = initial.bestSellersOnly;
     }
@@ -192,6 +205,10 @@ class ShopViewModel extends ChangeNotifier {
     final ids = <int>{};
     for (final p in [..._fetched, ..._repo.products]) {
       if (brands.contains(p.brand) && p.brandId != null && p.brandId! > 0) ids.add(p.brandId!);
+    }
+    for (final b in brands) {
+      final known = _brandIdByName[b];
+      if (known != null && known > 0) ids.add(known);
     }
     return ids.toList();
   }

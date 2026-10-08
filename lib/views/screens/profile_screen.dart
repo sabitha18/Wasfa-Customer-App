@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../../core/network/api_exception.dart';
+import '../../core/routing/app_routes.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/async_state_view.dart';
+import '../../data/models/app_user.dart';
 import '../../data/services/auth_service.dart';
 import '../../state/auth_state.dart';
 import '../../state/locale_state.dart';
@@ -81,6 +83,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
     // confirmed live) and refreshes everything once it lands, so the
     // screen doesn't just show stale on-device data indefinitely.
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadFromServer());
+  }
+
+  /// Fills the form from [user]. initState only does this once, at creation —
+  /// so when someone signs in FROM this screen (it was opened signed out, so
+  /// the fields were created empty), the form has to be filled again here.
+  void _fillFromUser(AppUser? user) {
+    if (user == null) return;
+    setState(() {
+      _name.text = user.name;
+      _civilId.text = user.civilId ?? '';
+      _email.text = user.email ?? '';
+      _phone.text = Formatters.localPhone(user.phone);
+      _nationality.text = user.nationality ?? '';
+      _weight.text = user.weight?.toString() ?? '';
+      _height.text = user.height?.toString() ?? '';
+      _emergName.text = user.emergName ?? '';
+      _emergRel.text = user.emergRel ?? '';
+      _emergPhone.text = user.emergPhone ?? '';
+      _dob = user.dob != null ? DateTime.tryParse(user.dob!) : null;
+      _gender = user.gender;
+      _bloodType = user.bloodType;
+    });
   }
 
   Future<void> _loadFromServer() async {
@@ -408,6 +432,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget build(BuildContext context) {
     final isArabic = context.watch<LocaleState>().isArabic;
     String t(String en, String arabic) => isArabic ? arabic : en;
+
+    // Signed out: this screen used to open an empty "WASFA customer" form
+    // that couldn't be saved. Now it asks to sign in first, like Wallet,
+    // My orders, My requests and the rest of the Account screen's rows.
+    if (!context.watch<AuthState>().isSignedIn) {
+      return Directionality(
+        textDirection: isArabic ? TextDirection.rtl : TextDirection.ltr,
+        child: Scaffold(
+          backgroundColor: AppColors.bg,
+          appBar: PageHeader(title: t('Profile', 'الملف الشخصي')),
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const Text('👤', style: TextStyle(fontSize: 34)),
+                const SizedBox(height: 10),
+                Text(t('Sign in to view and edit your profile', 'سجّل الدخول لعرض ملفك الشخصي وتعديله'), textAlign: TextAlign.center, style: const TextStyle(color: AppColors.muted)),
+                const SizedBox(height: 14),
+                ElevatedButton(
+                  onPressed: () async {
+                    final ok = await Navigator.of(context).pushNamed(Routes.login);
+                    if (ok == true && mounted) {
+                      _fillFromUser(context.read<AuthState>().user);
+                      _loadFromServer();
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(backgroundColor: AppColors.navy, foregroundColor: Colors.white),
+                  child: Text(t('Sign in', 'تسجيل الدخول')),
+                ),
+              ]),
+            ),
+          ),
+        ),
+      );
+    }
+
     final genderLabel = _gender == 'Male'
         ? t('Male', 'ذكر')
         : _gender == 'Female'
