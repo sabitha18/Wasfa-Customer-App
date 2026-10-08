@@ -487,4 +487,23 @@ class AddressState extends ChangeNotifier {
     notifyListeners();
     refreshDeliveryCharge();
   }
+
+  /// Clears the signed-in user's addresses and anything derived from them —
+  /// call on logout. Also resets the load-once guard so the NEXT user's
+  /// addresses actually get fetched. The area catalog (public data, not
+  /// user-specific) is kept.
+  void reset() {
+    addresses.clear();
+    selectedIndex = 0;
+    useCurrentLocation = true;
+    addressesLoading = false;
+    addressesError = null;
+    currentLocationAddress = null;
+    currentLocationMatchFailed = false;
+    currentDeliveryCharge = null;
+    deliveryChargeLoading = false;
+    deliveryChargeError = null;
+    _addressesRequested = false;
+    notifyListeners();
+  }
 }

@@ -6,7 +6,6 @@ import '../../core/utils/formatters.dart';
 import '../../core/widgets/async_state_view.dart';
 import '../../data/models/cart_line.dart';
 import '../../data/repositories/catalog_repository.dart';
-import '../../state/address_state.dart';
 import '../../state/auth_state.dart';
 import '../../state/cart_state.dart';
 import '../../state/locale_state.dart';
@@ -164,70 +163,34 @@ class _CartScreenState extends State<CartScreen> {
       bottomNavigationBar: (keys.isEmpty || isRx)
           ? null
           : Builder(builder: (context) {
-              final addressState = context.watch<AddressState>();
-              final totals = cart.computeTotals();
-              // The one real, server-computed delivery fee — see
-              // AddressState.currentDeliveryCharge's doc for why this (not
-              // any local computation, "smarter" area-based or otherwise)
-              // is the only source this ever reads. `totals.deliveryFee`
-              // itself is still computed internally by CartState (other
-              // callers still need `totals.groups`/`.subtotal` etc.), but
-              // its OWN fee value is deliberately never used for display
-              // here — swapped out for the real one below instead of
-              // trusting whatever CartState guessed internally.
-              final deliveryCharge = addressState.currentDeliveryCharge;
-              final realTotal = deliveryCharge == null ? null : totals.total - totals.deliveryFee + deliveryCharge.effectiveCharge;
-              final isArabic = context.watch<LocaleState>().isArabic;
+              // Cart shows ONLY the subtotal from /app/cart — no delivery
+              // fee here; delivery is handled on the Checkout screen.
+              // Fallback to the local line sum only when there's no API
+              // value at all (guest user, or the /app/cart call failed).
+              final apiSubtotal = cart.serverSubtotal;
+              final showSpinner = apiSubtotal == null && cart.cartLoading;
+              final subtotal = apiSubtotal ?? cart.cartSubtotal(cart.cart);
               return Container(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                padding: EdgeInsets.fromLTRB(16, 12, 16, 16 + MediaQuery.viewPaddingOf(context).bottom),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   boxShadow: [BoxShadow(color: AppColors.navy.withOpacity(0.10), blurRadius: 22, offset: const Offset(0, -6))],
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // A real, server-validated promo code (see
-                    // CartState.appliedCoupon) can make the total below
-                    // differ from the sum of item prices above — surfaced
-                    // here too, right next to the number it affects, same
-                    // as the Checkout screen's own Promo section.
-                    if (totals.promo != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                isArabic
-                                    ? '🏷️ ${totals.promo!.code} مُطبّق · ${totals.promo!.label(isArabic)}'
-                                    : '🏷️ ${totals.promo!.code} applied · ${totals.promo!.label(isArabic)}',
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: AppColors.sky),
-                              ),
-                            ),
-                            Text('−${Formatters.money(totals.promoDiscount)}', style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: AppColors.sky)),
-                          ],
-                        ),
-                      ),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.navy,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          elevation: 0,
-                        ),
-                        onPressed: () => Navigator.pushNamed(context, Routes.checkout),
-                        child: realTotal == null
-                            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white))
-                            : Text('${isArabic ? "إتمام الطلب" : "Checkout"} · ${Formatters.money(realTotal)}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                      ),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.navy,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      elevation: 0,
                     ),
-                  ],
+                    onPressed: () => Navigator.pushNamed(context, Routes.checkout),
+                    child: showSpinner
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white))
+                        : Text('${ar ? "إتمام الطلب" : "Checkout"} · ${Formatters.money(subtotal)}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  ),
                 ),
               );
             }),
@@ -355,7 +318,6 @@ class _PharmacyGroup extends StatelessWidget {
     // separately-confirmed fee. That's still real data, just not
     // necessarily a true per-pharmacy split; ask backend if a genuine
     // per-pharmacy fee is supposed to exist if that turns out to matter.
-    final deliveryCharge = context.watch<AddressState>().currentDeliveryCharge;
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       clipBehavior: Clip.antiAlias,
@@ -368,14 +330,6 @@ class _PharmacyGroup extends StatelessWidget {
             color: AppColors.bg,
             child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
               Text(isRx ? '℞ $pharmacy' : '🏪 $pharmacy', style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 12.5)),
-              Text(
-                cart.deliverTogether
-                    ? ''
-                    : (deliveryCharge == null
-                        ? '' // still loading — blank rather than a guessed number
-                        : (deliveryCharge.effectiveCharge == 0 ? '🚚 ${ar ? "مجاني" : "Free"}' : Formatters.money(deliveryCharge.effectiveCharge))),
-                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.ok),
-              ),
             ]),
           ),
           for (final line in items) _CartLineTile(line: line, isRx: isRx, cart: cart),

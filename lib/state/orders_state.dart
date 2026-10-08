@@ -429,6 +429,22 @@ class OrdersState extends ChangeNotifier {
     trackingOrderId = id;
     notifyListeners();
   }
+
+  /// Clears the signed-in user's orders, wallet and rewards — call on logout.
+  void reset() {
+    orders.clear();
+    ordersLoading = false;
+    ordersError = null;
+    walletLoading = false;
+    walletError = null;
+    wallet = 0;
+    walletCredited = 0;
+    walletUsed = 0;
+    rewards = 0;
+    trackingOrderId = null;
+    transactions = const [];
+    notifyListeners();
+  }
 }
 
 /// Result of checking out one prescription via [OrdersState.placeRxOrdersRemote].

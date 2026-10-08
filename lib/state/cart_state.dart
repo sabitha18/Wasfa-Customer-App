@@ -218,6 +218,7 @@ class CartState extends ChangeNotifier {
 
   void clearCart() {
     cart.clear();
+    serverSubtotal = null;
     notifyListeners();
   }
 
@@ -245,6 +246,17 @@ class CartState extends ChangeNotifier {
   bool cartLoading = false;
   bool rxCartLoading = false;
 
+  /// The cart's subtotal exactly as `/app/cart` returns it (top-level
+  /// `subtotal`). This is the ONLY number the Cart screen's Checkout button
+  /// shows — no delivery fee, no local math. Delivery is handled on the
+  /// Checkout screen only. Null until the first `/app/cart` load succeeds.
+  double? serverSubtotal;
+
+  /// Set when [loadCartRemote] is called while a load is already running,
+  /// so one more load runs right after it — otherwise a quick +/- tap
+  /// during an in-flight reload would leave [serverSubtotal] stale.
+  bool _cartReloadQueued = false;
+
   /// Replaces the local cart with the server's copy — call when opening the
   /// Cart screen (mirrors [loadWishlistRemote]'s pattern/reasoning).
   ///
@@ -257,11 +269,17 @@ class CartState extends ChangeNotifier {
   /// below is now dead in practice (kept only in case some future response
   /// is ever missing it) rather than the primary path it used to be.
   Future<void> loadCartRemote(int userId) async {
-    if (cartLoading) return;
+    if (cartLoading) {
+      _cartReloadQueued = true;
+      return;
+    }
     cartLoading = true;
     notifyListeners();
     try {
       final res = await CartService.instance.cart(userId);
+      if (res is Map) {
+        serverSubtotal = double.tryParse((res['subtotal'] ?? '').toString()) ?? serverSubtotal;
+      }
       final list = (res is Map ? res['items'] ?? res['cart'] ?? res['data'] : null) ?? (res is List ? res : const []);
       final entries = (list as List).whereType<Map>().toList();
 
@@ -437,6 +455,10 @@ class CartState extends ChangeNotifier {
     } finally {
       cartLoading = false;
       notifyListeners();
+      if (_cartReloadQueued) {
+        _cartReloadQueued = false;
+        loadCartRemote(userId);
+      }
     }
   }
 
@@ -625,6 +647,8 @@ class CartState extends ChangeNotifier {
         // mirror that server-side if we know this line's real cart_id.
         if (cartId != null) {
           await CartService.instance.remove(auth.userId!, cartId, 0);
+          // Re-fetch so the Cart screen's subtotal comes from the API.
+          if (!rx) loadCartRemote(auth.userId!);
         }
       } else if (cartId != null) {
         await CartService.instance.update(auth.userId!, cartId, store[key]!.qty);
@@ -656,6 +680,8 @@ class CartState extends ChangeNotifier {
     if (line.serverCartId == null) return; // never synced a real cart_id for this line — nothing to remove server-side
     try {
       await CartService.instance.remove(auth.userId!, line.serverCartId!, line.qty);
+      // Re-fetch so the Cart screen's subtotal comes from the API.
+      if (!rx) loadCartRemote(auth.userId!);
     } catch (e) {
       if (context.mounted) showErrorToast(context, 'Removed locally, but couldn\'t sync to your account: ${describeError(e)}');
     }
@@ -920,6 +946,29 @@ class CartState extends ChangeNotifier {
       total: total,
       due: total,
     );
+  }
+
+  /// Clears everything belonging to the signed-in user — call on logout so
+  /// the next person (guest or another account) never sees this user's
+  /// cart, wishlist or coupon.
+  void reset() {
+    cart.clear();
+    rxCart.clear();
+    wishlist.clear();
+    cartTab = 'my';
+    deliverTogether = false;
+    appliedCoupon = null;
+    _locallyToggledCartKeys.clear();
+    pendingSyncKeys.clear();
+    _listingSyncedProductIdentity.clear();
+    cartLoading = false;
+    rxCartLoading = false;
+    serverSubtotal = null;
+    _cartReloadQueued = false;
+    _wishlistFullySynced = false;
+    _locallyToggledWish.clear();
+    wishlistLoading = false;
+    notifyListeners();
   }
 }
 

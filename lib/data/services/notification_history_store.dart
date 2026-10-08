@@ -115,4 +115,14 @@ class NotificationHistoryStore extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_key, jsonEncode(_items.map((n) => n.toJson()).toList()));
   }
+
+  /// Deletes the stored notification history — call on logout so the next
+  /// user doesn't see the previous user's notifications.
+  Future<void> clear() async {
+    _items = [];
+    _loaded = true;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_key);
+    notifyListeners();
+  }
 }

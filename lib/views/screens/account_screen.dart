@@ -8,8 +8,10 @@ import '../../core/utils/formatters.dart';
 import '../../core/widgets/async_state_view.dart';
 import '../../data/models/legal_page.dart';
 import '../../data/services/account_service.dart';
+import '../../data/services/notification_history_store.dart';
 import '../../state/address_state.dart';
 import '../../state/auth_state.dart';
+import '../../state/cart_state.dart';
 import '../../state/locale_state.dart';
 import '../../state/location_state.dart';
 import '../../state/orders_state.dart';
@@ -192,7 +194,16 @@ class AccountScreen extends StatelessWidget {
                           ),
                         ),
                       );
-                      if (confirm == true) await context.read<AuthState>().logout();
+                      if (confirm == true) {
+                        // Clear the previous user's data before signing out,
+                        // so a guest/next user never sees it.
+                        context.read<CartState>().reset();
+                        context.read<AddressState>().reset();
+                        context.read<OrdersState>().reset();
+                        await NotificationHistoryStore.instance.clear();
+                        if (!context.mounted) return;
+                        await context.read<AuthState>().logout();
+                      }
                     },
                     child: Text(t('Log out', 'تسجيل الخروج')),
                   ),
