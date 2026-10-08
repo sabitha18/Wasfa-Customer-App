@@ -1,0 +1,270 @@
+PODS:
+  - EditableTextInsetsTextFieldV2 (0.0.3):
+    - TapAdditionsKitV2
+  - Firebase/CoreOnly (11.15.0):
+    - FirebaseCore (~> 11.15.0)
+  - Firebase/Messaging (11.15.0):
+    - Firebase/CoreOnly
+    - FirebaseMessaging (~> 11.15.0)
+  - firebase_core (3.15.2):
+    - Firebase/CoreOnly (= 11.15.0)
+    - Flutter
+  - firebase_messaging (15.2.10):
+    - Firebase/Messaging (= 11.15.0)
+    - firebase_core
+    - Flutter
+  - FirebaseCore (11.15.0):
+    - FirebaseCoreInternal (~> 11.15.0)
+    - GoogleUtilities/Environment (~> 8.1)
+    - GoogleUtilities/Logger (~> 8.1)
+  - FirebaseCoreInternal (11.15.0):
+    - "GoogleUtilities/NSData+zlib (~> 8.1)"
+  - FirebaseInstallations (11.15.0):
+    - FirebaseCore (~> 11.15.0)
+    - GoogleUtilities/Environment (~> 8.1)
+    - GoogleUtilities/UserDefaults (~> 8.1)
+    - PromisesObjC (~> 2.4)
+  - FirebaseMessaging (11.15.0):
+    - FirebaseCore (~> 11.15.0)
+    - FirebaseInstallations (~> 11.0)
+    - GoogleDataTransport (~> 10.0)
+    - GoogleUtilities/AppDelegateSwizzler (~> 8.1)
+    - GoogleUtilities/Environment (~> 8.1)
+    - GoogleUtilities/Reachability (~> 8.1)
+    - GoogleUtilities/UserDefaults (~> 8.1)
+    - nanopb (~> 3.30910.0)
+  - Flutter (1.0.0)
+  - flutter_local_notifications (0.0.1):
+    - Flutter
+  - geocoding_ios (1.0.5):
+    - Flutter
+  - geolocator_apple (1.2.0):
+    - Flutter
+    - FlutterMacOS
+  - go_sell_sdk_flutter (0.0.1):
+    - Flutter
+    - goSellSDK (= 2.3.49)
+  - Google-Maps-iOS-Utils (5.0.0):
+    - GoogleMaps (~> 8.0)
+  - google_maps_flutter_ios (0.0.1):
+    - Flutter
+    - Google-Maps-iOS-Utils (< 7.0, >= 5.0)
+    - GoogleMaps (< 11.0, >= 8.4)
+  - GoogleDataTransport (10.1.1):
+    - nanopb (~> 3.30910.0)
+    - PromisesObjC (~> 2.4)
+  - GoogleMaps (8.4.0):
+    - GoogleMaps/Maps (= 8.4.0)
+  - GoogleMaps/Base (8.4.0)
+  - GoogleMaps/Maps (8.4.0):
+    - GoogleMaps/Base
+  - GoogleUtilities/AppDelegateSwizzler (8.1.4):
+    - GoogleUtilities/Environment
+    - GoogleUtilities/Logger
+    - GoogleUtilities/Network
+    - GoogleUtilities/Privacy
+  - GoogleUtilities/Environment (8.1.4):
+    - GoogleUtilities/Privacy
+  - GoogleUtilities/Logger (8.1.4):
+    - GoogleUtilities/Environment
+    - GoogleUtilities/Privacy
+  - GoogleUtilities/Network (8.1.4):
+    - GoogleUtilities/Logger
+    - "GoogleUtilities/NSData+zlib"
+    - GoogleUtilities/Privacy
+    - GoogleUtilities/Reachability
+  - "GoogleUtilities/NSData+zlib (8.1.4)":
+    - GoogleUtilities/Privacy
+  - GoogleUtilities/Privacy (8.1.4)
+  - GoogleUtilities/Reachability (8.1.4):
+    - GoogleUtilities/Logger
+    - GoogleUtilities/Privacy
+  - GoogleUtilities/UserDefaults (8.1.4):
+    - GoogleUtilities/Logger
+    - GoogleUtilities/Privacy
+  - goSellSDK (2.3.49):
+    - goSellSDK/Core (= 2.3.49)
+  - goSellSDK/Core (2.3.49):
+    - EditableTextInsetsTextFieldV2
+    - SwiftyRSA
+    - TapAdditionsKitV2
+    - TapApplicationV2
+    - TapBundleLocalizationV2
+    - TapCardVlidatorKit-iOS
+    - TapEditableViewV2
+    - TapFontsKitV2
+    - TapGLKitV2
+    - TapKeychainV2
+    - TapNetworkManagerV2
+    - TapNibViewV2
+    - TapResponderChainInputViewV2
+    - TapSearchViewV2
+    - TapVisualEffectViewV2
+  - image_picker_ios (0.0.1):
+    - Flutter
+  - nanopb (3.30910.0):
+    - nanopb/decode (= 3.30910.0)
+    - nanopb/encode (= 3.30910.0)
+  - nanopb/decode (3.30910.0)
+  - nanopb/encode (3.30910.0)
+  - PromisesObjC (2.4.1)
+  - share_plus (0.0.1):
+    - Flutter
+  - shared_preferences_foundation (0.0.1):
+    - Flutter
+    - FlutterMacOS
+  - SwiftyRSA (1.7.0):
+    - SwiftyRSA/ObjC (= 1.7.0)
+  - SwiftyRSA/ObjC (1.7.0)
+  - TapAdditionsKitV2 (0.0.18):
+    - TapSwiftFixesV2
+  - TapApplicationV2 (0.0.3):
+    - TapAdditionsKitV2
+  - TapBundleLocalizationV2 (0.0.3)
+  - TapCardVlidatorKit-iOS (1.0.25)
+  - TapEditableViewV2 (1.0.2):
+    - TapAdditionsKitV2
+  - TapFontsKitV2 (0.0.5):
+    - TapAdditionsKitV2
+  - TapGLKitV2 (0.0.3):
+    - TapAdditionsKitV2
+  - TapKeychainV2 (1.0.2)
+  - TapNetworkManagerV2 (0.0.6):
+    - TapAdditionsKitV2
+  - TapNibViewV2 (0.0.3):
+    - TapAdditionsKitV2
+  - TapResponderChainInputViewV2 (0.0.5):
+    - TapAdditionsKitV2
+    - TapNibViewV2
+  - TapSearchViewV2 (0.0.5):
+    - TapAdditionsKitV2
+    - TapNibViewV2
+  - TapSwiftFixesV2 (1.0.3):
+    - TapSwiftFixesV2/CoreGraphics (= 1.0.3)
+    - TapSwiftFixesV2/Exceptions (= 1.0.3)
+    - TapSwiftFixesV2/Threading (= 1.0.3)
+  - TapSwiftFixesV2/CoreGraphics (1.0.3)
+  - TapSwiftFixesV2/Exceptions (1.0.3)
+  - TapSwiftFixesV2/Threading (1.0.3)
+  - TapVisualEffectViewV2 (0.0.4):
+    - TapAdditionsKitV2
+    - TapNibViewV2
+  - url_launcher_ios (0.0.1):
+    - Flutter
+
+DEPENDENCIES:
+  - firebase_core (from `.symlinks/plugins/firebase_core/ios`)
+  - firebase_messaging (from `.symlinks/plugins/firebase_messaging/ios`)
+  - Flutter (from `Flutter`)
+  - flutter_local_notifications (from `.symlinks/plugins/flutter_local_notifications/ios`)
+  - geocoding_ios (from `.symlinks/plugins/geocoding_ios/ios`)
+  - geolocator_apple (from `.symlinks/plugins/geolocator_apple/darwin`)
+  - go_sell_sdk_flutter (from `.symlinks/plugins/go_sell_sdk_flutter/ios`)
+  - google_maps_flutter_ios (from `.symlinks/plugins/google_maps_flutter_ios/ios`)
+  - image_picker_ios (from `.symlinks/plugins/image_picker_ios/ios`)
+  - share_plus (from `.symlinks/plugins/share_plus/ios`)
+  - shared_preferences_foundation (from `.symlinks/plugins/shared_preferences_foundation/darwin`)
+  - url_launcher_ios (from `.symlinks/plugins/url_launcher_ios/ios`)
+
+SPEC REPOS:
+  trunk:
+    - EditableTextInsetsTextFieldV2
+    - Firebase
+    - FirebaseCore
+    - FirebaseCoreInternal
+    - FirebaseInstallations
+    - FirebaseMessaging
+    - Google-Maps-iOS-Utils
+    - GoogleDataTransport
+    - GoogleMaps
+    - GoogleUtilities
+    - goSellSDK
+    - nanopb
+    - PromisesObjC
+    - SwiftyRSA
+    - TapAdditionsKitV2
+    - TapApplicationV2
+    - TapBundleLocalizationV2
+    - TapCardVlidatorKit-iOS
+    - TapEditableViewV2
+    - TapFontsKitV2
+    - TapGLKitV2
+    - TapKeychainV2
+    - TapNetworkManagerV2
+    - TapNibViewV2
+    - TapResponderChainInputViewV2
+    - TapSearchViewV2
+    - TapSwiftFixesV2
+    - TapVisualEffectViewV2
+
+EXTERNAL SOURCES:
+  firebase_core:
+    :path: ".symlinks/plugins/firebase_core/ios"
+  firebase_messaging:
+    :path: ".symlinks/plugins/firebase_messaging/ios"
+  Flutter:
+    :path: Flutter
+  flutter_local_notifications:
+    :path: ".symlinks/plugins/flutter_local_notifications/ios"
+  geocoding_ios:
+    :path: ".symlinks/plugins/geocoding_ios/ios"
+  geolocator_apple:
+    :path: ".symlinks/plugins/geolocator_apple/darwin"
+  go_sell_sdk_flutter:
+    :path: ".symlinks/plugins/go_sell_sdk_flutter/ios"
+  google_maps_flutter_ios:
+    :path: ".symlinks/plugins/google_maps_flutter_ios/ios"
+  image_picker_ios:
+    :path: ".symlinks/plugins/image_picker_ios/ios"
+  share_plus:
+    :path: ".symlinks/plugins/share_plus/ios"
+  shared_preferences_foundation:
+    :path: ".symlinks/plugins/shared_preferences_foundation/darwin"
+  url_launcher_ios:
+    :path: ".symlinks/plugins/url_launcher_ios/ios"
+
+SPEC CHECKSUMS:
+  EditableTextInsetsTextFieldV2: 4734d3376d6b1ebe95afc824da5caa1c37b228a3
+  Firebase: d99ac19b909cd2c548339c2241ecd0d1599ab02e
+  firebase_core: 995454a784ff288be5689b796deb9e9fa3601818
+  firebase_messaging: f4a41dd102ac18b840eba3f39d67e77922d3f707
+  FirebaseCore: efb3893e5b94f32b86e331e3bd6dadf18b66568e
+  FirebaseCoreInternal: 9afa45b1159304c963da48addb78275ef701c6b4
+  FirebaseInstallations: 317270fec08a5d418fdbc8429282238cab3ac843
+  FirebaseMessaging: 3b26e2cee503815e01c3701236b020aa9b576f09
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  flutter_local_notifications: 395056b3175ba4f08480a7c5de30cd36d69827e4
+  geocoding_ios: 33776c9ebb98d037b5e025bb0e7537f6dd19646e
+  geolocator_apple: ab36aa0e8b7d7a2d7639b3b4e48308394e8cef5e
+  go_sell_sdk_flutter: 5f5653950385c97b00daf877a4003e21b568ce23
+  Google-Maps-iOS-Utils: 66d6de12be1ce6d3742a54661e7a79cb317a9321
+  google_maps_flutter_ios: 17552876e72723da1d41accc22f03b5f7afbde69
+  GoogleDataTransport: a24e58982ab3ba2f64d79613e027fe7f57e88539
+  GoogleMaps: 8939898920281c649150e0af74aa291c60f2e77d
+  GoogleUtilities: db34c1c11c6f2eccb6fab2340cb8ceb1451299dc
+  goSellSDK: 7e7ca3e083ccec2081ef29596cd78ec240f2bb2e
+  image_picker_ios: e0ece4aa2a75771a7de3fa735d26d90817041326
+  nanopb: fad817b59e0457d11a5dfbde799381cd727c1275
+  PromisesObjC: 752c3227f599e3467650e47ea36f433eeb10c273
+  share_plus: de6030e33b4e106470e09322d87cf2a4258d2d1d
+  shared_preferences_foundation: 7036424c3d8ec98dfe75ff1667cb0cd531ec82bb
+  SwiftyRSA: 8c6dd1ea7db1b8dc4fb517a202f88bb1354bc2c6
+  TapAdditionsKitV2: 53a290b5639ff91fbe53e5904e2940c697bed3e9
+  TapApplicationV2: a5e256888515be65654f048605bfb871a5ad53a9
+  TapBundleLocalizationV2: 282e5a0ebfd08b502ec2ba22dde8da2de7340110
+  TapCardVlidatorKit-iOS: 399d7dfcd301a3a5798e39332e15b2008427abbe
+  TapEditableViewV2: 53f87bbf98d7599f564e6e5bad1be6c1a5b31d66
+  TapFontsKitV2: 2b11cd69c4f8c4485376c92a1982387a5184ca13
+  TapGLKitV2: 5e5857e73e5a516807ec9c388f5c028de7616290
+  TapKeychainV2: aaa08a208f3e7aea042e2caf1b6b5abb39baecdc
+  TapNetworkManagerV2: 73a80838e7a30bd05e1030ff4b751421f14774a6
+  TapNibViewV2: a6df9bfe0a36dfa9039b8200f2921dd5f66874c5
+  TapResponderChainInputViewV2: d62b22fd9f1e6e9a195e4960c5679805a83ed44c
+  TapSearchViewV2: b6fb11576b6e20570768378d31499a3cb86f9010
+  TapSwiftFixesV2: ea726f752b6259d9e44624039fd6bad94b2a8633
+  TapVisualEffectViewV2: bc2b3b718acc3c1298ce7d21985633941d986345
+  url_launcher_ios: 7a95fa5b60cc718a708b8f2966718e93db0cef1b
+
+PODFILE CHECKSUM: e30f02f9d1c72c47bb6344a0a748c9d268180865
+
+COCOAPODS: 1.16.2
