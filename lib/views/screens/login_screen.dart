@@ -18,7 +18,11 @@ import '../../core/widgets/async_state_view.dart';
 /// if (ok == true) { /* proceed */ }
 /// ```
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  /// Optional line shown at the top explaining why login is needed — e.g.
+  /// "Log in to complete your order" when opened from the cart's Checkout.
+  /// Null everywhere else, so other entry points look the same as before.
+  final String? message;
+  const LoginScreen({super.key, this.message});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -124,6 +128,14 @@ class _LoginScreenState extends State<LoginScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 8),
+              if (widget.message != null && !_codeSent)
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(color: AppColors.benefitPillBg, borderRadius: BorderRadius.circular(12)),
+                  child: Text(widget.message!, style: const TextStyle(color: AppColors.navy, fontSize: 13.5, fontWeight: FontWeight.w600)),
+                ),
               Text(
                 _codeSent ? t('Enter verification code', 'أدخل رمز التحقق') : t('Sign in to WASFA', 'تسجيل الدخول إلى وصفة'),
                 style: const TextStyle(color: AppColors.navy, fontSize: 24, fontWeight: FontWeight.w800),

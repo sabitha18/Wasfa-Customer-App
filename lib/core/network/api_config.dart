@@ -103,6 +103,7 @@ class ApiConfig {
   static const String cartAdd = '/app/cart/add';
   static const String cartUpdate = '/app/cart/update';
   static const String cartRemove = '/app/cart/remove';
+  static const String cartAssign = '/app/cart/assign';
   static const String acctAddresses = '/acct/addresses';
   static const String acctAddressSave = '/acct/address-save';
   static const String acctAddressDelete = '/acct/address-delete';

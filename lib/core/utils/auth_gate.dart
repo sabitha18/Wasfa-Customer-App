@@ -12,9 +12,12 @@ import '../routing/app_routes.dart';
 /// if (!await requireLogin(context)) return;
 /// // proceed with the signed-in-only action
 /// ```
-Future<bool> requireLogin(BuildContext context) async {
+///
+/// [message] (optional) is shown at the top of the login screen to explain
+/// why it opened — e.g. from the cart's Checkout button.
+Future<bool> requireLogin(BuildContext context, {String? message}) async {
   final auth = context.read<AuthState>();
   if (auth.isSignedIn) return true;
-  final result = await Navigator.of(context).pushNamed(Routes.login);
+  final result = await Navigator.of(context).pushNamed(Routes.login, arguments: message);
   return result == true;
 }

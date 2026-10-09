@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import '../core/network/api_exception.dart';
 import '../core/notifications/notification_service.dart';
 import '../core/utils/session_store.dart';
+import '../data/services/cart_service.dart';
 import '../data/models/app_user.dart';
 import '../data/services/auth_service.dart';
 
@@ -88,6 +89,12 @@ class AuthState extends ChangeNotifier {
       status = AuthStatus.signedIn;
       await SessionStore.save(u);
       NotificationService.instance.registerTokenForUser(u.id);
+      // Move this phone's guest cart (device_token) to the user. Awaited so
+      // the cart reload right after login already sees the merged cart.
+      // A failure here must never block login.
+      try {
+        await CartService.instance.assign(u.id);
+      } catch (_) {}
       return true;
     } catch (e) {
       otpError = describeError(e);

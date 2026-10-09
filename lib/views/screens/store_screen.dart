@@ -489,6 +489,7 @@ class _SellerBannerCard extends StatelessWidget {
 /// (2026-10-07); `category` is assumed to follow the same shape. Anything
 /// unrecognised keeps the old behaviour (below) instead of failing.
 bool sellerBannerHasDestination(SellerBanner b) =>
+    b.linkType == 'offers' ||
     (b.linkType == 'product' && b.linkIdText != null) ||
     (b.linkId != null && (b.linkType == 'category' || b.linkType == 'brand'));
 
@@ -504,6 +505,15 @@ void _openSellerBannerDestination(BuildContext context, SellerBanner banner, Pha
   // handled before the numeric-id guard below, which would drop e.g. "a16346".
   if (banner.linkType == 'product' && banner.linkIdText != null) {
     openProductFromBanner(context, banner.linkIdText!, label);
+    return;
+  }
+  // `link_type: "offers"` (no id) — this store's offers only, filtered by
+  // the API (`/app/products?shop=<id>&offers=1`).
+  if (banner.linkType == 'offers') {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => ShopScreen(initialFilter: ShopFilter(pharmacy: store.seller, shopId: store.id, offersOnly: true))),
+    );
     return;
   }
   if (id != null) {

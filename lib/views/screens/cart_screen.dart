@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/routing/app_routes.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/auth_gate.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/async_state_view.dart';
 import '../../data/models/cart_line.dart';
@@ -26,12 +27,42 @@ class _CartScreenState extends State<CartScreen> {
       final auth = context.read<AuthState>();
       // Syncs the server's copy of the cart in — mirrors how the Wishlist
       // tab refreshes on open (see CartState.loadCartRemote's doc for why).
-      if (auth.isSignedIn) {
-        final cart = context.read<CartState>();
-        cart.loadCartRemote(auth.userId!);
-        cart.loadRxCartRemote(auth.userId!);
-      }
+      // Guests too: userId null → guest cart by device_token.
+      final cart = context.read<CartState>();
+      cart.loadCartRemote(auth.userId);
+      if (auth.isSignedIn) cart.loadRxCartRemote(auth.userId!);
     });
+  }
+
+  /// True while a guest is being taken through login → assign → reload.
+  bool _checkingOut = false;
+
+  /// Signed in: straight to checkout. Guest: open login (with a message
+  /// saying why). On success, AuthState.verifyOtp has already called
+  /// `/app/cart/assign`, so reload the now-merged cart from the API and
+  /// continue to checkout. If login is cancelled, stay on the cart.
+  Future<void> _onCheckout() async {
+    final auth = context.read<AuthState>();
+    if (auth.isSignedIn) {
+      Navigator.pushNamed(context, Routes.checkout);
+      return;
+    }
+    final ar = context.read<LocaleState>().isArabic;
+    final ok = await requireLogin(
+      context,
+      message: ar ? 'سجّل الدخول لإتمام طلبك' : 'Log in to complete your order',
+    );
+    if (!ok || !mounted) return;
+    final userId = context.read<AuthState>().userId;
+    if (userId == null) return;
+    setState(() => _checkingOut = true);
+    try {
+      await context.read<CartState>().reloadAfterLogin(userId);
+    } finally {
+      if (mounted) setState(() => _checkingOut = false);
+    }
+    if (!mounted) return;
+    Navigator.pushNamed(context, Routes.checkout);
   }
 
   @override
@@ -163,13 +194,11 @@ class _CartScreenState extends State<CartScreen> {
       bottomNavigationBar: (keys.isEmpty || isRx)
           ? null
           : Builder(builder: (context) {
-              // Cart shows ONLY the subtotal from /app/cart — no delivery
-              // fee here; delivery is handled on the Checkout screen.
-              // Fallback to the local line sum only when there's no API
-              // value at all (guest user, or the /app/cart call failed).
+              // Cart shows ONLY the subtotal from /app/cart (guest or
+              // signed in) — no delivery fee, no local math. If the API
+              // value isn't available (call failed), just "Checkout".
               final apiSubtotal = cart.serverSubtotal;
-              final showSpinner = apiSubtotal == null && cart.cartLoading;
-              final subtotal = apiSubtotal ?? cart.cartSubtotal(cart.cart);
+              final showSpinner = _checkingOut || (apiSubtotal == null && cart.cartLoading);
               return Container(
                 padding: EdgeInsets.fromLTRB(16, 12, 16, 16 + MediaQuery.viewPaddingOf(context).bottom),
                 decoration: BoxDecoration(
@@ -182,14 +211,21 @@ class _CartScreenState extends State<CartScreen> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.navy,
                       foregroundColor: Colors.white,
+                      disabledBackgroundColor: AppColors.navy,
+                      disabledForegroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       elevation: 0,
                     ),
-                    onPressed: () => Navigator.pushNamed(context, Routes.checkout),
+                    onPressed: _checkingOut ? null : _onCheckout,
                     child: showSpinner
                         ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white))
-                        : Text('${ar ? "إتمام الطلب" : "Checkout"} · ${Formatters.money(subtotal)}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                        : Text(
+                            apiSubtotal == null
+                                ? (ar ? "إتمام الطلب" : "Checkout")
+                                : '${ar ? "إتمام الطلب" : "Checkout"} · ${Formatters.money(apiSubtotal)}',
+                            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                          ),
                   ),
                 ),
               );

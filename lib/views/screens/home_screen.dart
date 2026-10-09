@@ -290,6 +290,16 @@ class _BannerCard extends StatelessWidget {
       final sku = banner.linkRefText;
       return sku == null ? null : () => openProductFromBanner(context, sku, target);
     }
+    // Confirmed live (2026-10-09): `link_type: "offers"` with
+    // `link_ref: null` — opens the Shop with "Offers only" on, which the
+    // API filters (`/app/products?offers=1`). Handled before the numeric-id
+    // guard below, since there's no link_ref for it.
+    if (banner.linkType == 'offers') {
+      return () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const ShopScreen(initialFilter: ShopFilter(offersOnly: true))),
+          );
+    }
     final ref = banner.linkRef;
     if (ref == null) return null;
     switch (banner.linkType) {

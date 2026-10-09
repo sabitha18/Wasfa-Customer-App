@@ -39,7 +39,7 @@ class AppRouter {
       case Routes.root:
         return _page(const RootShell());
       case Routes.login:
-        return _page(const LoginScreen());
+        return _page(LoginScreen(message: args is String ? args : null));
       case Routes.profile:
         return _page(const ProfileScreen());
 

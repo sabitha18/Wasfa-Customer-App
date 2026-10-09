@@ -268,7 +268,7 @@ class CartState extends ChangeNotifier {
   /// alone — no PDP fetch needed at all anymore. The PDP-fallback branch
   /// below is now dead in practice (kept only in case some future response
   /// is ever missing it) rather than the primary path it used to be.
-  Future<void> loadCartRemote(int userId) async {
+  Future<void> loadCartRemote(int? userId) async {
     if (cartLoading) {
       _cartReloadQueued = true;
       return;
@@ -579,7 +579,7 @@ class CartState extends ChangeNotifier {
     if (pendingSyncKeys.contains(key)) return; // previous tap's call still in flight
     final existedAlready = cart.containsKey(key);
     addToCart(p, seller: seller, price: price, was: was, apiProductId: apiProductId, inStock: inStock); // instant, local — unchanged
-    if (!auth.isSignedIn) return;
+    // Guest too: userId null → CartService sends device_token instead.
     final line = cart[key];
     if (line == null) return;
 
@@ -593,10 +593,10 @@ class CartState extends ChangeNotifier {
         // known yet, there's nothing to target server-side, so this stays
         // a local-only bump until the next sync picks up the real id.
         if (line.serverCartId != null) {
-          await CartService.instance.update(auth.userId!, line.serverCartId!, line.qty);
+          await CartService.instance.update(auth.userId, line.serverCartId!, line.qty);
           // Same reasoning as setQtyRemote's own update call — see its
           // comment on why this isn't awaited and what it corrects.
-          loadCartRemote(auth.userId!);
+          loadCartRemote(auth.userId);
         }
       } else {
         // Confirmed: a real `/app/products` response has `product_id`
@@ -607,7 +607,7 @@ class CartState extends ChangeNotifier {
         // placement). Confirms this is the right id for a first-time add,
         // where there's no cart_id yet at all.
         final productIdForServer = apiProductId ?? p.id;
-        final cartId = await CartService.instance.add(auth.userId!, productIdForServer, line.qty);
+        final cartId = await CartService.instance.add(auth.userId, productIdForServer, line.qty);
         if (cartId != null) line.serverCartId = cartId;
       }
     } catch (e) {
@@ -636,7 +636,9 @@ class CartState extends ChangeNotifier {
     final cartId = line.serverCartId;
 
     setQty(key, delta, rx: rx); // instant, local — unchanged
-    if (!auth.isSignedIn) return;
+    // Rx cart is signed-in only; the regular cart works for guests too
+    // (userId null → CartService sends device_token).
+    if (rx && !auth.isSignedIn) return;
 
     pendingSyncKeys.add(key);
     notifyListeners();
@@ -646,12 +648,12 @@ class CartState extends ChangeNotifier {
         // Quantity dropped to 0 and [setQty] already removed it locally —
         // mirror that server-side if we know this line's real cart_id.
         if (cartId != null) {
-          await CartService.instance.remove(auth.userId!, cartId, 0);
+          await CartService.instance.remove(auth.userId, cartId, 0);
           // Re-fetch so the Cart screen's subtotal comes from the API.
-          if (!rx) loadCartRemote(auth.userId!);
+          if (!rx) loadCartRemote(auth.userId);
         }
       } else if (cartId != null) {
-        await CartService.instance.update(auth.userId!, cartId, store[key]!.qty);
+        await CartService.instance.update(auth.userId, cartId, store[key]!.qty);
         // /app/cart/update's own response doesn't return updated
         // free_qty/paid_qty/bogo_saved for this line (just {"ok","action"})
         // — recomputeBogoLocally's "1 free per 2 units" guess is what's
@@ -660,7 +662,7 @@ class CartState extends ChangeNotifier {
         // why a locally-toggled line's bogo fields specifically get
         // updated from this, unlike its qty) shortly after, without
         // delaying this tap's own already-instant feedback.
-        if (!rx) loadCartRemote(auth.userId!);
+        if (!rx) loadCartRemote(auth.userId);
       }
     } catch (e) {
       if (context.mounted) showErrorToast(context, 'Couldn\'t sync that quantity change: ${describeError(e)}');
@@ -676,12 +678,13 @@ class CartState extends ChangeNotifier {
     final store = rx ? rxCart : cart;
     final line = store[key];
     removeLine(key, rx: rx);
-    if (!auth.isSignedIn || line == null) return;
+    if (line == null) return;
+    if (rx && !auth.isSignedIn) return; // Rx cart is signed-in only
     if (line.serverCartId == null) return; // never synced a real cart_id for this line — nothing to remove server-side
     try {
-      await CartService.instance.remove(auth.userId!, line.serverCartId!, line.qty);
+      await CartService.instance.remove(auth.userId, line.serverCartId!, line.qty);
       // Re-fetch so the Cart screen's subtotal comes from the API.
-      if (!rx) loadCartRemote(auth.userId!);
+      if (!rx) loadCartRemote(auth.userId);
     } catch (e) {
       if (context.mounted) showErrorToast(context, 'Removed locally, but couldn\'t sync to your account: ${describeError(e)}');
     }
@@ -946,6 +949,23 @@ class CartState extends ChangeNotifier {
       total: total,
       due: total,
     );
+  }
+
+  /// Call right after login (once `/app/cart/assign` has moved the guest
+  /// cart to the user). Drops the "locally touched" markers first so the
+  /// reload fully trusts the server — after assign the server may have
+  /// MERGED quantities, and a locally-touched line would otherwise keep its
+  /// old guest quantity instead of the merged one.
+  Future<void> reloadAfterLogin(int userId) async {
+    _locallyToggledCartKeys.clear();
+    // Guest-only lines the server no longer returns must go too.
+    cart.removeWhere((_, l) => l.serverCartId == null);
+    await loadCartRemote(userId);
+    // loadCartRemote may have been queued behind an in-flight guest load;
+    // wait for that queued run to finish as well.
+    while (cartLoading) {
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
   }
 
   /// Clears everything belonging to the signed-in user — call on logout so
