@@ -205,6 +205,7 @@ class OrdersState extends ChangeNotifier {
     int? deliverySlot,
     double? latitude,
     double? longitude,
+    int deliverTogether = 0,
   }) async {
     // Resolved concurrently rather than one at a time — with several items
     // each needing their own PDP lookup, resolving them sequentially could
@@ -225,6 +226,7 @@ class OrdersState extends ChangeNotifier {
       deliverySlot: deliverySlot,
       latitude: latitude,
       longitude: longitude,
+      deliverTogether: deliverTogether,
     );
     final groups = totals.groups.entries
         .map((e) => OrderGroup(
@@ -270,6 +272,9 @@ class OrdersState extends ChangeNotifier {
     required int addressId,
     required String payment,
     required Map<String, CartLine> rxCart,
+    // prescription id → deliver_together (1/0), same value checkout-init
+    // was called with for that prescription. Missing → 0.
+    Map<String, int> deliverTogetherByRx = const {},
   }) async {
     final byRx = <String, List<CartLine>>{};
     for (final line in rxCart.values) {
@@ -281,7 +286,7 @@ class OrdersState extends ChangeNotifier {
     final results = <RxCheckoutResult>[];
     for (final rxId in byRx.keys) {
       try {
-        final code = await _accountService.rxCheckout(userId, rxId, addressId, payment);
+        final code = await _accountService.rxCheckout(userId, rxId, addressId, payment, deliverTogether: deliverTogetherByRx[rxId] ?? 0);
         results.add(RxCheckoutResult(prescriptionId: rxId, orderCode: code, success: true));
       } catch (e) {
         results.add(RxCheckoutResult(prescriptionId: rxId, error: describeError(e), success: false));

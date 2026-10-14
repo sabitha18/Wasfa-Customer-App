@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../core/network/api_exception.dart';
 import '../data/models/home_feed.dart';
-import '../data/models/pharmacy_store.dart';
 import '../data/models/product.dart';
 import '../data/repositories/catalog_repository.dart';
 import '../data/services/catalog_service.dart';

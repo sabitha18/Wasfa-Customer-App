@@ -172,9 +172,9 @@ class _LoginScreenState extends State<LoginScreen> {
       decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(12)),
       child: Row(
         children: [
-          Padding(
-            padding: const EdgeInsets.only(left: 14),
-            child: Text(_countryCode, style: const TextStyle(color: AppColors.ink, fontWeight: FontWeight.w700, fontSize: 14.5)),
+          const Padding(
+            padding: EdgeInsets.only(left: 14),
+            child: Text(_countryCode, style: TextStyle(color: AppColors.ink, fontWeight: FontWeight.w700, fontSize: 14.5)),
           ),
           Container(margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 12), width: 1.2, height: 20, color: AppColors.line),
           Expanded(

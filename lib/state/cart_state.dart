@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
 import '../core/network/api_exception.dart';
@@ -7,7 +6,6 @@ import '../core/widgets/async_state_view.dart';
 import '../data/models/cart_line.dart';
 import '../data/models/coupon_result.dart';
 import '../data/models/area_catalog.dart';
-import '../data/models/prescription.dart';
 import '../data/models/product.dart';
 import '../data/models/promo.dart';
 import '../data/repositories/catalog_repository.dart';
@@ -700,6 +698,33 @@ class CartState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// `deliver_together` to send for the My Cart checkout (checkout-init and
+  /// /orders): the switch value, but only when My Cart actually has 2+
+  /// pharmacies — the switch is hidden for a single pharmacy, so a value
+  /// left ON from earlier (before an item was removed) must not be sent.
+  /// No amount is calculated here; the backend decides the fee.
+  int get deliverTogetherParam => (deliverTogether && groupsFor(cart).length > 1) ? 1 : 0;
+
+  /// Rx: one "Deliver together" switch PER PRESCRIPTION (each prescription
+  /// is its own order with its own Checkout button). Default OFF.
+  final Map<String, bool> rxDeliverTogether = {};
+
+  bool rxDeliverTogetherOn(String rxId) => rxDeliverTogether[rxId] ?? false;
+
+  void toggleRxDeliverTogether(String rxId) {
+    rxDeliverTogether[rxId] = !rxDeliverTogetherOn(rxId);
+    notifyListeners();
+  }
+
+  /// How many different pharmacies this prescription's lines come from —
+  /// a count only (decides whether its switch is shown), no amounts.
+  int rxPharmacyCount(String rxId) =>
+      rxCart.values.where((l) => l.rxId == rxId).map((l) => l.seller).toSet().length;
+
+  /// `deliver_together` for one prescription's checkout-init and order:
+  /// its switch value, but only when it actually has 2+ pharmacies.
+  int rxDeliverTogetherParam(String rxId) => (rxDeliverTogetherOn(rxId) && rxPharmacyCount(rxId) > 1) ? 1 : 0;
+
   void toggleDeliverTogether() {
     deliverTogether = !deliverTogether;
     notifyListeners();
@@ -861,18 +886,7 @@ class CartState extends ChangeNotifier {
   double cartSubtotal(Map<String, CartLine> store) =>
       store.values.fold(0.0, (s, l) => s + lineCharge(l));
 
-  /// Flat combined-delivery fee when "Deliver together" is on and the cart
-  /// spans more than one pharmacy (see [deliveryTotal]) — matches the HTML
-  /// prototype's own `deliveryTotal()` exactly. Worth being explicit about:
-  /// this can cost MORE than delivery would without the toggle, if every
-  /// pharmacy group already qualifies for free delivery on its own — it's
-  /// trading that off for one consolidated delivery instead of several
-  /// separate ones, not a discount. The UI shows this amount directly next
-  /// to the toggle so that trade-off isn't a surprise after switching it on.
-  static const double togetherDeliveryFee = 1.250;
-
   double deliveryTotal(Map<String, List<CartLine>> groups, {AreaCatalog? areaCatalog, int? areaId}) {
-    if (deliverTogether && groups.keys.length > 1) return togetherDeliveryFee;
     return groups.values.fold(0.0, (s, items) => s + pharmacyFee(groupSubtotal(items), areaCatalog: areaCatalog, areaId: areaId));
   }
 
@@ -977,6 +991,7 @@ class CartState extends ChangeNotifier {
     wishlist.clear();
     cartTab = 'my';
     deliverTogether = false;
+    rxDeliverTogether.clear();
     appliedCoupon = null;
     _locallyToggledCartKeys.clear();
     pendingSyncKeys.clear();

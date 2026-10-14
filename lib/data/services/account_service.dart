@@ -90,13 +90,17 @@ class AccountService {
   /// here. (`ok: false` responses never reach the code below at all — the
   /// shared ApiClient already throws for those before this method sees
   /// them, same as every other endpoint.)
-  Future<String> rxCheckout(int userId, String prescriptionId, int addressId, String payment) async {
+  ///
+  /// [deliverTogether] → `deliver_together` (1/0) — this prescription's
+  /// switch, matching the value its checkout-init was called with.
+  Future<String> rxCheckout(int userId, String prescriptionId, int addressId, String payment, {int deliverTogether = 0}) async {
     final res = await withFallbackMessage(
       () => _client.post(ApiConfig.acctRxCheckout, body: {
         'user_id': userId,
         'prescription_id': prescriptionId,
         'address_id': addressId,
         'payment': payment,
+        'deliver_together': deliverTogether,
       }),
       'Couldn\'t check out this prescription right now.',
     );
@@ -139,13 +143,18 @@ class AccountService {
   /// selected address/area here means the summary this returns is already
   /// correct for it, so that workaround is gone — see
   /// checkout_screen.dart's history for what used to be here instead.
-  Future<CheckoutInitData> checkoutInit(int userId, {String? prescriptionId, int? addressId, int? areaId}) async {
+  ///
+  /// [deliverTogether] → `deliver_together` (1/0). The backend picks the
+  /// delivery-fee case from it plus the number of sellers (area-based
+  /// fees). Null = not sent (Rx checkout, until Rx is wired up).
+  Future<CheckoutInitData> checkoutInit(int userId, {String? prescriptionId, int? addressId, int? areaId, int? deliverTogether}) async {
     final res = await _client.get(ApiConfig.checkoutInit, query: {
       'user_id': userId,
       'is_rx': prescriptionId != null ? 1 : 0,
       if (prescriptionId != null) 'prescription_id': prescriptionId,
       if (addressId != null) 'address_id': addressId,
       if (areaId != null) 'area_id': areaId,
+      if (deliverTogether != null) 'deliver_together': deliverTogether,
     });
     return CheckoutInitData.fromJson(res as Map<String, dynamic>);
   }

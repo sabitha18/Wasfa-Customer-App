@@ -44,6 +44,9 @@ class OrderService {
     // these being accepted/stored.
     double? latitude,
     double? longitude,
+    // `deliver_together` (1/0) — must match what checkout-init was called
+    // with, so the charged delivery fee is the one the customer saw.
+    int deliverTogether = 0,
   }) async {
     // The server's `payment` enum is strictly cod|knet|wallet. The checkout UI
     // also offers a "Card" option — Kuwait card payments run through the KNET
@@ -73,6 +76,7 @@ class OrderService {
         'payment': normalizedPayment,
         'wallet_redeem': walletRedeem,
         'coupon': coupon,
+        'deliver_together': deliverTogether,
         'items': items,
       }),
       'Couldn\'t place your order. Please try again.',

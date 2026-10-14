@@ -174,7 +174,7 @@ class _CartScreenState extends State<CartScreen> {
                             children: [
                               Text(t('Deliver together', 'التوصيل معاً'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.navy)),
                               const SizedBox(height: 2),
-                              Text('${t("One delivery fee for all pharmacies", "رسوم توصيل واحدة لجميع الصيدليات")} · ${Formatters.money(CartState.togetherDeliveryFee)}', style: const TextStyle(fontSize: 11, color: AppColors.muted)),
+                              Text(t('One delivery for all pharmacies', 'توصيل واحد لجميع الصيدليات'), style: const TextStyle(fontSize: 11, color: AppColors.muted)),
                             ],
                           ),
                         ),
@@ -291,6 +291,28 @@ class _RxPrescriptionGroup extends StatelessWidget {
             ]),
           ),
           const Divider(height: 1, color: AppColors.line),
+          // Per-prescription "Deliver together" — only when THIS
+          // prescription's items come from 2+ pharmacies. No amount shown;
+          // the fee comes from checkout-init on the Checkout screen.
+          if (cart.rxPharmacyCount(rxId) > 1)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+              decoration: BoxDecoration(color: const Color(0xFFE7F7FB), borderRadius: BorderRadius.circular(13)),
+              child: Row(children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(ar ? 'التوصيل معاً' : 'Deliver together', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.navy)),
+                      const SizedBox(height: 2),
+                      Text(ar ? 'توصيل واحد لجميع الصيدليات' : 'One delivery for all pharmacies', style: const TextStyle(fontSize: 11, color: AppColors.muted)),
+                    ],
+                  ),
+                ),
+                Switch(value: cart.rxDeliverTogetherOn(rxId), activeThumbColor: AppColors.sky, onChanged: (_) => cart.toggleRxDeliverTogether(rxId)),
+              ]),
+            ),
           for (final line in items) _CartLineTile(line: line, isRx: true, cart: cart),
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
@@ -337,7 +359,6 @@ class _PharmacyGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ar = context.watch<LocaleState>().isArabic;
     // Was `cart.pharmacyFee(cart.groupSubtotal(items))` called with no area context at all —
     // the one spot left still falling straight through to the old fake
     // flat rule (`sub >= 3 ? 0 : 0.750`) after everywhere else was fixed

@@ -138,14 +138,24 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   /// delivery slots and the promo/totals section need to read [_initData]
   /// directly, since nothing else already renders those.
   Future<void> _loadCheckoutInit(int userId) async {
-    setState(() => _initLoading = true);
+    setState(() {
+      _initLoading = true;
+      _initError = null;
+    });
     try {
       final a = context.read<AddressState>().effectiveAddress;
+      // deliver_together: My Cart → the cart switch; Rx → that
+      // prescription's own switch (each prescription is its own order).
+      final cartState = context.read<CartState>();
+      final deliverTogether = widget.rxScope == null
+          ? cartState.deliverTogetherParam
+          : cartState.rxDeliverTogetherParam(widget.rxScope!);
       var data = await AccountService.instance.checkoutInit(
         userId,
         prescriptionId: widget.rxScope,
         addressId: a?.id,
         areaId: a?.areaId,
+        deliverTogether: deliverTogether,
       );
       if (!mounted) return;
       // Auto-apply the best qualifying promotion that doesn't need a typed
@@ -181,7 +191,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               // delivery fee) simply because it asked about a different
               // address's checkout state, not because the apply itself
               // failed.
-              data = await AccountService.instance.checkoutInit(userId, prescriptionId: widget.rxScope, addressId: a?.id, areaId: a?.areaId);
+              data = await AccountService.instance.checkoutInit(userId, prescriptionId: widget.rxScope, addressId: a?.id, areaId: a?.areaId, deliverTogether: deliverTogether);
             }
           } catch (_) {
             // Silent — checkout still works without the auto-applied offer;
@@ -222,6 +232,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
   }
 
+  /// Retry from the full-page error (first load failed).
+  void _retryInit() {
+    final auth = context.read<AuthState>();
+    if (auth.isSignedIn) _loadCheckoutInit(auth.userId!);
+  }
+
   void _onInitDataChanged(CheckoutInitData data) {
     if (!mounted) return;
     context.read<OrdersState>().syncWalletBalance(data.walletBalance);
@@ -237,6 +253,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         initLoading: _initLoading,
         initError: _initError,
         onInitDataChanged: _onInitDataChanged,
+        onRetry: _retryInit,
         rxScope: widget.rxScope,
       ),
     );
@@ -248,8 +265,9 @@ class _CheckoutBody extends StatelessWidget {
   final bool initLoading;
   final String? initError;
   final ValueChanged<CheckoutInitData> onInitDataChanged;
+  final VoidCallback onRetry;
   final String? rxScope;
-  const _CheckoutBody({required this.initData, required this.initLoading, required this.initError, required this.onInitDataChanged, this.rxScope});
+  const _CheckoutBody({required this.initData, required this.initLoading, required this.initError, required this.onInitDataChanged, required this.onRetry, this.rxScope});
 
   @override
   Widget build(BuildContext context) {
@@ -303,22 +321,23 @@ class _CheckoutBody extends StatelessWidget {
       child: Scaffold(
       backgroundColor: AppColors.bg,
       appBar: PageHeader(title: t('Checkout', 'إتمام الطلب')),
-      body: ListView(
+      // First load: nothing but a loader until checkout-init answers (no
+      // local/placeholder values ever shown). First load failed: full-page
+      // error with Retry. After that, refreshes (address/coupon change)
+      // keep the UI and put a blocking loader overlay on top.
+      body: initData == null && initLoading
+          ? LoadingView(message: t('Loading checkout…', 'جارٍ تحميل الطلب…'))
+          : initData == null && initError != null
+              ? ErrorRetryView(message: initError!, onRetry: onRetry)
+              : Stack(
+                  children: [
+      ListView(
         padding: const EdgeInsets.only(bottom: 120),
         children: [
           if (initError != null)
-            // Non-blocking — checkout still works from local computation
-            // while this failed, so this is a note, not a hard stop.
-            InlineErrorBanner(message: t('Some checkout details didn\'t load: $initError', 'لم يتم تحميل بعض تفاصيل الطلب: $initError'), onRetry: null)
-          else if (initLoading && initData == null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: Row(children: [
-                const SizedBox(width: 13, height: 13, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.sky)),
-                const SizedBox(width: 8),
-                Text(t('Loading checkout details…', 'جارٍ تحميل تفاصيل الطلب…'), style: const TextStyle(fontSize: 11.5, color: AppColors.muted)),
-              ]),
-            ),
+            // A REFRESH failed (first load already succeeded) — the values
+            // on screen are from the last successful load.
+            InlineErrorBanner(message: t('Some checkout details didn\'t load: $initError', 'لم يتم تحميل بعض تفاصيل الطلب: $initError'), onRetry: onRetry),
           // ── .sec2 — "Shipping address" + edit icon ──
           _Sec2(
             label: t('Shipping address', 'عنوان التوصيل'),
@@ -562,7 +581,19 @@ class _CheckoutBody extends StatelessWidget {
           ),
         ],
       ),
-      bottomNavigationBar: Container(
+                    if (initLoading && initData != null)
+                      Positioned.fill(
+                        child: AbsorbPointer(
+                          child: Container(
+                            color: AppColors.bg.withValues(alpha: 0.7),
+                            child: const Center(child: CircularProgressIndicator(color: AppColors.sky)),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+      // Hidden until the first checkout-init succeeds.
+      bottomNavigationBar: initData == null ? null : Container(
         padding: EdgeInsets.fromLTRB(16, 10, 16, 16 + MediaQuery.viewPaddingOf(context).bottom),
         decoration: BoxDecoration(
           color: Colors.white,
@@ -583,6 +614,8 @@ class _CheckoutBody extends StatelessWidget {
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.rose,
                 foregroundColor: Colors.white,
+                disabledBackgroundColor: AppColors.rose.withValues(alpha: 0.5),
+                disabledForegroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
                 elevation: 0,
@@ -594,7 +627,9 @@ class _CheckoutBody extends StatelessWidget {
               // no separate per-address fee to also wait on anymore.
               // Placing an order against a guessed number isn't something
               // to let happen silently either way.
-              onPressed: data != null ? () => _placeOrder(context, cart, vm, data) : null,
+              // Also disabled while a refresh is in flight, so an order can
+              // never be placed against the previous address/coupon values.
+              onPressed: data != null && !initLoading ? () => _placeOrder(context, cart, vm, data) : null,
               child: data == null
                   ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white))
                   : Text(
@@ -729,6 +764,7 @@ class _CheckoutBody extends StatelessWidget {
         // address was chosen — the device's actual GPS pin, for the rider.
         latitude: location.position?.latitude,
         longitude: location.position?.longitude,
+        deliverTogether: cart.deliverTogetherParam,
       );
       if (context.mounted) hideBusyOverlay(context);
       if (!context.mounted) return;
@@ -1014,6 +1050,10 @@ class _CheckoutBody extends StatelessWidget {
         addressId: address.id!,
         payment: vm.pay,
         rxCart: inStockRxCart,
+        deliverTogetherByRx: {
+          for (final id in inStockRxCart.values.map((l) => l.rxId).whereType<String>().toSet())
+            id: cart.rxDeliverTogetherParam(id),
+        },
       );
       if (context.mounted) hideBusyOverlay(context);
       if (!context.mounted) return;
@@ -1124,7 +1164,15 @@ class _CheckoutBody extends StatelessWidget {
           Future<void> refreshAfterChange() async {
             if (userId == null) return;
             final address = context.read<AddressState>().effectiveAddress;
-            final fresh = await AccountService.instance.checkoutInit(userId, prescriptionId: rxScope, addressId: address?.id, areaId: address?.areaId);
+            final fresh = await AccountService.instance.checkoutInit(
+              userId,
+              prescriptionId: rxScope,
+              addressId: address?.id,
+              areaId: address?.areaId,
+              deliverTogether: rxScope == null
+                  ? context.read<CartState>().deliverTogetherParam
+                  : context.read<CartState>().rxDeliverTogetherParam(rxScope!),
+            );
             onChanged(fresh);
           }
 

@@ -17,7 +17,6 @@ import '../../state/location_state.dart';
 import '../../state/orders_state.dart';
 import '../widgets/address_sheets.dart';
 import '../widgets/html_content.dart';
-import '../widgets/toast.dart';
 
 /// Matches the HTML's `rAccount()`:
 /// - `.acc-head` — full-bleed sky→navy gradient banner (not a rounded card
@@ -195,6 +194,7 @@ class AccountScreen extends StatelessWidget {
                         ),
                       );
                       if (confirm == true) {
+                        if (!context.mounted) return;
                         // Clear the previous user's data before signing out,
                         // so a guest/next user never sees it.
                         context.read<CartState>().reset();
