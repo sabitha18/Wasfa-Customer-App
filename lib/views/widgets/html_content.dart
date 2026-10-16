@@ -89,6 +89,33 @@ class HtmlBlocks extends StatelessWidget {
         child: _richText(inner, style),
       ));
     }
+    // Fallback — ONLY when no <h1/h2/h3/p> blocks were found at all (pages
+    // that already render are untouched). Covers content that is plain text
+    // with line breaks (e.g. the English privacy page) or other HTML such as
+    // a <table>/<td> pasted from Excel/Word (e.g. the Arabic privacy page):
+    // block-ish tags and blank lines become paragraph breaks, every other
+    // tag is stripped, and each paragraph renders exactly like a <p>.
+    if (widgets.isEmpty) {
+      for (final para in _fallbackParagraphs(html)) {
+        widgets.add(Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Text(para, style: bodyStyle),
+        ));
+      }
+    }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: widgets);
+  }
+
+  static final _breakTagRegex = RegExp(r'<\s*(br|/td|/th|/tr|/div|/li|/table|/p)\b[^>]*>', caseSensitive: false);
+
+  static List<String> _fallbackParagraphs(String html) {
+    final marked = html.replaceAll(_breakTagRegex, '\n\n');
+    final text = _stripTags(marked).replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    return text
+        .split(RegExp(r'\n\s*\n'))
+        .map((p) => p.replaceAll(RegExp(r'\s+'), ' ').trim())
+        // Drop empty and punctuation-only leftovers (e.g. a lone "." cell).
+        .where((p) => p.isNotEmpty && RegExp(r'[^\s.\-–—]').hasMatch(p))
+        .toList();
   }
 }

@@ -12,10 +12,18 @@ class ProductCard extends StatelessWidget {
   final Product product;
   final VoidCallback onTap;
 
+  /// True only where the card is given a FIXED height by its parent — the
+  /// Shop grid's rows (IntrinsicHeight + stretch), so both cards in a row
+  /// match the taller one. The price + button block is then pushed to the
+  /// bottom so the two buttons line up. Must stay false anywhere the
+  /// height is unbounded (a Spacer there would throw).
+  final bool fillHeight;
+
   const ProductCard({
     super.key,
     required this.product,
     required this.onTap,
+    this.fillHeight = false,
   });
 
   @override
@@ -110,7 +118,9 @@ class ProductCard extends StatelessWidget {
                 ),
               ],
             ),
-            Padding(
+            _MaybeExpanded(
+              expand: fillHeight,
+              child: Padding(
               padding: const EdgeInsets.fromLTRB(11, 9, 11, 9),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -166,6 +176,7 @@ class ProductCard extends StatelessWidget {
                       style: const TextStyle(fontSize: 10, color: AppColors.muted),
                     );
                   }),
+                  if (fillHeight) const Spacer(),
                   const SizedBox(height: 4),
                   // .pr — reserve space for 2 lines (price, then strike-through
                   // price below if it doesn't fit alongside) so wrapping can't
@@ -305,11 +316,22 @@ class ProductCard extends StatelessWidget {
                 ],
               ),
             ),
+            ),
           ],
         ),
       ),
     );
   }
+}
+
+/// Wraps [child] in Expanded only when [expand] — see ProductCard.fillHeight.
+class _MaybeExpanded extends StatelessWidget {
+  final bool expand;
+  final Widget child;
+  const _MaybeExpanded({required this.expand, required this.child});
+
+  @override
+  Widget build(BuildContext context) => expand ? Expanded(child: child) : child;
 }
 
 /// Small +/- tap target inside the `.qstep` cart quantity stepper.

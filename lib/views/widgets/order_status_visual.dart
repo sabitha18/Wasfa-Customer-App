@@ -21,8 +21,14 @@ const _deliveredBg = Color(0xFFE7F8F0);
 /// Refunded, Closed) — so a status showing up here that this app has
 /// genuinely never seen before still falls back to the 'Preparing' look
 /// rather than rendering nothing.
-OrderStatusVisual orderStatusVisual(String status) {
+/// [raw] = the API's own status string — used as the label for a value
+/// this app doesn't know yet ('other'), e.g. "ready_for_pickup" →
+/// "Ready for pickup", instead of guessing a status. English only (the API
+/// gives no Arabic labels).
+OrderStatusVisual orderStatusVisual(String status, {String raw = ''}) {
   switch (status) {
+    case 'other':
+      return OrderStatusVisual(label: _readable(raw), bg: AppColors.blush, fg: AppColors.rose);
     case 'pending':
       return const OrderStatusVisual(label: 'Pending', bg: AppColors.line, fg: AppColors.muted);
     case 'conf':
@@ -51,6 +57,12 @@ OrderStatusVisual orderStatusVisual(String status) {
   }
 }
 
+String _readable(String raw) {
+  final t = raw.replaceAll('_', ' ').trim();
+  if (t.isEmpty) return 'Pending';
+  return t[0].toUpperCase() + t.substring(1);
+}
+
 /// True for the "side" outcomes — cancelled, either return step, refunded,
 /// closed — that don't have a meaningful spot on the linear
 /// confirmed→preparing→on the way→delivered timeline. Screens that render
@@ -62,11 +74,12 @@ bool isTerminalSideStatus(String status) => const {'cancelled', 'return_requeste
 /// identically instead of three near-identical hand-rolled Containers.
 class OrderStatusBadge extends StatelessWidget {
   final String status;
-  const OrderStatusBadge({super.key, required this.status});
+  final String raw;
+  const OrderStatusBadge({super.key, required this.status, this.raw = ''});
 
   @override
   Widget build(BuildContext context) {
-    final v = orderStatusVisual(status);
+    final v = orderStatusVisual(status, raw: raw);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(color: v.bg, borderRadius: BorderRadius.circular(20)),

@@ -474,11 +474,26 @@ class Order {
 
   int get pharmacyCount => groups.isNotEmpty ? groups.length : (apiPharmacyCount ?? 0);
 
+  /// API order statuses (confirmed list, 2026-10-16): pending, collecting,
+  /// confirmed, processing, picked_up, on_the_way, delivered, cancelled,
+  /// return_requested, return_completed, refunded, closed. Previously only
+  /// delivered/on-the-way were recognised and EVERYTHING else (incl.
+  /// cancelled/returns) fell back to 'prep' → shown as "Preparing", with a
+  /// Cancel button on already-cancelled orders. Buckets here are the ones
+  /// orderStatusVisual (order_status_visual.dart) renders. An unrecognised
+  /// value → 'other' (shown as the API's own text, not a guessed status).
   static String _normalizeStatus(String raw) {
-    final s = raw.toLowerCase();
+    final s = raw.toLowerCase().trim();
     if (['done', 'delivered', 'completed', 'complete'].contains(s)) return 'done';
     if (['way', 'out_for_delivery', 'on_the_way', 'shipping', 'dispatched'].contains(s)) return 'way';
-    return 'prep';
+    if (s == 'picked_up') return 'picked_up';
+    if (['processing', 'preparing', 'prep'].contains(s)) return 'prep';
+    if (['confirmed', 'conf'].contains(s)) return 'conf';
+    if (s == 'pending') return 'pending';
+    if (s == 'collecting') return 'collecting';
+    if (['cancelled', 'canceled'].contains(s)) return 'cancelled';
+    if (['return_requested', 'return_completed', 'refunded', 'closed'].contains(s)) return s;
+    return s.isEmpty ? 'pending' : 'other';
   }
 
   /// From `GET /my-orders` list items or `GET /acct/order/{code}` detail.

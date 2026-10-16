@@ -212,37 +212,52 @@ class _ShopBody extends StatelessWidget {
         SliverFillRemaining(hasScrollBody: false, child: Center(child: Text(t('No results', 'لا توجد نتائج'), style: const TextStyle(color: AppColors.muted))))
       else if (vm.view == 'grid')
         // ── .pgrid ──
+        // Rows of 2 cards instead of a fixed-ratio SliverGrid. A fixed
+        // childAspectRatio made the card height follow the SCREEN WIDTH, so
+        // wide phones (e.g. iPhone 15 Pro Max, 430pt) got big empty space
+        // under the button, and narrow phones / large text / Arabic risked
+        // overflow. Each row is now exactly as tall as its taller card
+        // (IntrinsicHeight + stretch); both cards match, buttons aligned
+        // (ProductCard.fillHeight). Still lazily built while scrolling.
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
-          sliver: SliverGrid(
-            // Lower ratio = taller tiles. The card's content is a stack of
-            // mostly fixed-height sections (110px image + brand + 2-line name
-            // + rating + pharmacy name + price + button); at .58 that stack
-            // was ~17px taller than the tile on typical phones, causing
-            // "BOTTOM OVERFLOWED BY 17 PIXELS", fixed by dropping to .56 —
-            // then the pharmacy-name line added back a similar amount, so
-            // this needs to be shorter again at .50.
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: .50),
+          sliver: SliverList(
             delegate: SliverChildBuilderDelegate(
-              (context, i) {
-                // Captured ONCE here, not re-derived inside onTap — `results`
-                // recomputes a brand-new filtered/sorted list on every
-                // access (see ShopViewModel.results), so calling it again
-                // lazily inside onTap (evaluated at actual tap time, not
-                // build time) could return a DIFFERENT product than what's
-                // rendered if anything changed the underlying list in
-                // between — e.g. background pagination (loadMore)
-                // appending items while scrolling. Capturing the product
-                // here guarantees the id used for navigation always
-                // matches what's actually on screen.
-                final product = results[i];
-                return ProductCard(
-                  product: product,
-                  onTap: () => Navigator.pushNamed(context, Routes.product, arguments: product.id),
+              (context, row) {
+                // Captured ONCE here, not re-derived inside onTap — see the
+                // list view below for why (background pagination can
+                // change `results` between build and tap).
+                final left = results[row * 2];
+                final right = row * 2 + 1 < results.length ? results[row * 2 + 1] : null;
+                return Padding(
+                  padding: EdgeInsets.only(bottom: row * 2 + 2 < results.length ? 12 : 0),
+                  child: IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          child: ProductCard(
+                            product: left,
+                            fillHeight: true,
+                            onTap: () => Navigator.pushNamed(context, Routes.product, arguments: left.id),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: right == null
+                              ? const SizedBox.shrink()
+                              : ProductCard(
+                                  product: right,
+                                  fillHeight: true,
+                                  onTap: () => Navigator.pushNamed(context, Routes.product, arguments: right.id),
+                                ),
+                        ),
+                      ],
+                    ),
+                  ),
                 );
               },
-              childCount: results.length,
+              childCount: (results.length + 1) ~/ 2,
             ),
           ),
         )
@@ -378,6 +393,10 @@ class _ShopBody extends StatelessWidget {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      // Keeps a tall sheet below the status bar / notch / Dynamic Island
+      // (otherwise its header and close button can end up under the
+      // clock and battery icons on iPhone and can't be tapped).
+      useSafeArea: true,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
       builder: (_) => Directionality(

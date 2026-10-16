@@ -543,13 +543,20 @@ class _AttrGrid extends StatelessWidget {
       (Icons.location_on_rounded, sel.stock ? (ar ? 'متوفر' : 'In stock') : (ar ? 'غير متوفر' : 'Out of stock')),
       (Icons.local_shipping_rounded, ar ? 'توصيل سريع' : 'Fast delivery'),
     ];
-    return GridView.count(
-      crossAxisCount: 2,
+    // Fixed badge height instead of `childAspectRatio: 2.8`. The ratio made
+    // the height follow the screen WIDTH, so wide phones (iPhone 15 Pro Max,
+    // 430pt) got much taller, mostly empty badges. 60 = what typical Android
+    // phones already showed with the ratio, so Android looks unchanged and
+    // iPhone now matches it.
+    return GridView(
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisSpacing: 9,
+        crossAxisSpacing: 9,
+        mainAxisExtent: 60,
+      ),
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 9,
-      crossAxisSpacing: 9,
-      childAspectRatio: 2.8,
       children: [for (final it in items) _Attr(icon: it.$1, label: it.$2)],
     );
   }

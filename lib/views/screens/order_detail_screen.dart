@@ -11,6 +11,7 @@ import '../../state/auth_state.dart';
 import '../../state/cart_state.dart';
 import '../../state/locale_state.dart';
 import '../../state/orders_state.dart';
+import '../widgets/order_status_visual.dart';
 import '../widgets/page_header.dart';
 import '../widgets/review_sheet.dart';
 import 'request_flow_screen.dart';
@@ -96,7 +97,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       t('On the way', 'في الطريق'),
       t('Delivered', 'تم التوصيل'),
     ];
-    final idx = {'conf': 0, 'prep': 1, 'way': 2, 'done': 3}[order.status] ?? 1;
+    // Position on the 4-step timeline. pending/collecting/confirmed sit on
+    // step 1, processing on 2, picked_up/on_the_way on 3, delivered on 4.
+    // Cancelled/returns/refunded/closed have no place on it — a status
+    // banner is shown instead (isTerminalSideStatus).
+    final idx = const {'pending': 0, 'collecting': 0, 'conf': 0, 'other': 0, 'prep': 1, 'picked_up': 2, 'way': 2, 'done': 3}[order.status] ?? 0;
+    final sideStatus = isTerminalSideStatus(order.status);
 
     return Directionality(
       textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
@@ -133,15 +139,14 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               Text(order.id, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
               Text(Formatters.dateShort(order.ts), style: const TextStyle(fontSize: 11.5, color: AppColors.muted)),
             ]),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(color: order.status == 'done' ? const Color(0xFFE7F8F0) : AppColors.blush, borderRadius: BorderRadius.circular(20)),
-              child: Text(order.status == 'done' ? t('Delivered', 'تم التوصيل') : (order.status == 'way' ? t('On the way', 'في الطريق') : t('Preparing', 'قيد التحضير')),
-                  style: TextStyle(color: order.status == 'done' ? AppColors.ok : AppColors.rose, fontWeight: FontWeight.w700, fontSize: 11)),
-            ),
+            OrderStatusBadge(status: order.status, raw: order.rawStatus),
           ]),
           const SizedBox(height: 14),
-          // .timeline — vertical dot + connecting line, not horizontal bars
+          // .timeline — vertical dot + connecting line, not horizontal bars.
+          // Cancelled/returns/refunded/closed → a status banner instead.
+          if (sideStatus)
+            OrderStatusBanner(status: order.status)
+          else
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), boxShadow: AppColors.shSm),
@@ -404,7 +409,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           // by SOME submitted request — someone can request 2 of 5 items,
           // and still be able to come back and request the other 3 later.
           // The button only disappears once every item has been covered.
-          if (order.status != 'done' && order.remainingForCancel.isNotEmpty)
+          // Cancel only while the order is still before pickup — never on
+          // a cancelled/returned/refunded/closed order, and not once it's
+          // picked up / on the way / delivered.
+          if (const {'pending', 'collecting', 'conf', 'prep', 'other'}.contains(order.status) && order.remainingForCancel.isNotEmpty)
             OutlinedButton(
               style: OutlinedButton.styleFrom(foregroundColor: AppColors.danger, side: const BorderSide(color: AppColors.danger)),
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => RequestFlowScreen(orderId: order.id, type: 'cancel'))),

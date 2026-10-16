@@ -32,6 +32,10 @@ void showAddressPickerSheet(BuildContext context, AddressState addressState, Loc
     // address" — became completely unreachable, with no scroll indicator
     // or any other sign there was more content below.
     isScrollControlled: true,
+    // Keeps a tall sheet below the status bar / notch / Dynamic Island
+    // (otherwise its header and close button can end up under the
+    // clock and battery icons on iPhone and can't be tapped).
+    useSafeArea: true,
     backgroundColor: Colors.white,
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
     builder: (sheetContext) => Directionality(
@@ -109,21 +113,13 @@ void showAddressPickerSheet(BuildContext context, AddressState addressState, Loc
                             Text(t('Current location', 'الموقع الحالي'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5, color: AppColors.navy)),
                             const SizedBox(height: 2),
                             Text(
-                              // Once a real match attempt has confirmed this
-                              // GPS location doesn't correspond to anywhere
-                              // in the delivery area catalog, say so plainly
-                              // instead of showing a location label that
-                              // implies it's usable when it isn't — this is
-                              // exactly the mismatch that used to show
-                              // "Current location" selected here while
-                              // Checkout quietly used a different address.
-                              addressState.useCurrentLocation && addressState.currentLocationMatchFailed
-                                  ? t("Doesn't match a delivery area — using your saved address instead", 'لا يتطابق مع منطقة توصيل — سيتم استخدام عنوانك المحفوظ بدلاً منه')
-                                  : (locationState.formatted?.isNotEmpty == true ? locationState.formatted! : t('Detects your location automatically', 'يكتشف موقعك تلقائياً')),
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: (addressState.useCurrentLocation && addressState.currentLocationMatchFailed) ? AppColors.rose : AppColors.muted,
-                              ),
+                              // Always just the GPS place (no "doesn't match a
+                              // delivery area" warning). Whether it maps to a
+                              // delivery area only matters at checkout, where
+                              // the user completes it into a full saved
+                              // address (area, block, street, building).
+                              locationState.formatted?.isNotEmpty == true ? locationState.formatted! : t('Detects your location automatically', 'يكتشف موقعك تلقائياً'),
+                              style: const TextStyle(fontSize: 11, color: AppColors.muted),
                             ),
                           ],
                         ),
@@ -249,6 +245,10 @@ Future<bool?> showAddressFormSheet(BuildContext context, AddressState addressSta
   return showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
+    // Keeps a tall sheet below the status bar / notch / Dynamic Island
+    // (otherwise its header and close button can end up under the
+    // clock and battery icons on iPhone and can't be tapped).
+    useSafeArea: true,
     backgroundColor: Colors.white,
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
     builder: (_) => _AddressFormSheet(addressState: addressState, index: index),
@@ -355,20 +355,29 @@ class _AddressFormSheetState extends State<_AddressFormSheet> {
     final areaGuess = location.area;
     if (govGuess == null && areaGuess == null) return;
 
+    // Pre-fill as much as GPS can give: the area when its name matches,
+    // otherwise at least the governorate; the street ALWAYS (it used to be
+    // filled only on an area match). The user picks/corrects the rest.
+    int? govId;
+    int? areaId;
+    outer:
     for (final g in widget.addressState.areaCatalog.governorates) {
       final govMatches = govGuess != null && (norm(g.name).contains(norm(govGuess)) || norm(govGuess).contains(norm(g.name)));
+      if (govMatches) govId ??= g.id;
       for (final a in g.areas) {
         final areaMatches = areaGuess != null && (norm(a.name).contains(norm(areaGuess)) || norm(areaGuess).contains(norm(a.name)));
         if (areaMatches || (govMatches && areaGuess == null)) {
-          setState(() {
-            _govId = g.id;
-            _areaId = a.id;
-            if (location.street != null && location.street!.isNotEmpty && _street.text.isEmpty) _street.text = location.street!;
-          });
-          return;
+          govId = g.id;
+          areaId = a.id;
+          break outer;
         }
       }
     }
+    setState(() {
+      if (_govId == null && govId != null) _govId = govId;
+      if (_areaId == null && areaId != null && _govId == govId) _areaId = areaId;
+      if (location.street != null && location.street!.isNotEmpty && _street.text.isEmpty) _street.text = location.street!;
+    });
   }
 
   @override

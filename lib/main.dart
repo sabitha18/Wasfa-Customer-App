@@ -93,6 +93,24 @@ class WasfaApp extends StatelessWidget {
         navigatorKey: NotificationService.instance.navigatorKey,
         initialRoute: Routes.splash,
         onGenerateRoute: AppRouter.onGenerateRoute,
+        // Text gets slightly bigger on WIDE screens only, so it fits the
+        // screen the same way it does on typical phones (client feedback:
+        // text looked small on iPhone 15 Pro Max, 430pt wide). Based on the
+        // screen's shortest side (rotation doesn't change it):
+        //   <= 400pt (most Android phones, iPhone 15/16) → 1.0 (unchanged)
+        //   430pt (Pro Max)                              → ~1.07
+        //   anything wider (iPad)                        → capped at 1.10
+        // Multiplies the user's own system text size, so accessibility
+        // settings are still respected. Text only — icons/padding unchanged.
+        builder: (context, child) {
+          final mq = MediaQuery.of(context);
+          final extra = ((mq.size.shortestSide - 400) / 30 * 0.07).clamp(0.0, 0.10);
+          if (extra <= 0) return child!;
+          return MediaQuery(
+            data: mq.copyWith(textScaler: TextScaler.linear(mq.textScaler.scale(1) * (1 + extra))),
+            child: child!,
+          );
+        },
       ),
     );
   }

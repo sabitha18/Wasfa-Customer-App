@@ -31,6 +31,10 @@ Future<void> openReviewSheet(BuildContext context, {required String sku, require
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
+    // Keeps a tall sheet below the status bar / notch / Dynamic Island
+    // (otherwise its header and close button can end up under the
+    // clock and battery icons on iPhone and can't be tapped).
+    useSafeArea: true,
     backgroundColor: Colors.white,
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
     builder: (sheetContext) => Directionality(

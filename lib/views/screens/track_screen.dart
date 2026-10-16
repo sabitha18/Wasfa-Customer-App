@@ -12,6 +12,7 @@ import '../../state/locale_state.dart';
 import '../../state/orders_state.dart';
 import '../widgets/page_header.dart';
 import '../widgets/toast.dart';
+import '../widgets/order_status_visual.dart';
 
 class TrackScreen extends StatefulWidget {
   final String orderId;
@@ -117,7 +118,9 @@ class _TrackScreenState extends State<TrackScreen> {
       t('On the way', 'في الطريق'),
       t('Delivered', 'تم التوصيل'),
     ];
-    final idx = {'conf': 0, 'prep': 1, 'way': 2, 'done': 3}[status] ?? 1;
+    // Same mapping as Order details — see Order._normalizeStatus.
+    final idx = const {'pending': 0, 'collecting': 0, 'conf': 0, 'other': 0, 'prep': 1, 'picked_up': 2, 'way': 2, 'done': 3}[status] ?? 0;
+    final sideStatus = isTerminalSideStatus(status);
 
     return Directionality(
       textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
@@ -194,7 +197,13 @@ class _TrackScreenState extends State<TrackScreen> {
               ]),
             ),
 
-            // ── .timeline ──
+            // ── .timeline ── (cancelled/returns/refunded/closed → banner)
+            if (sideStatus)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+                child: OrderStatusBanner(status: status),
+              )
+            else
             Container(
               margin: const EdgeInsets.fromLTRB(16, 10, 16, 14),
               padding: const EdgeInsets.all(16),

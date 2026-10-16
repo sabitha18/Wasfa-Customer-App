@@ -9,6 +9,7 @@ import '../../state/auth_state.dart';
 import '../../state/cart_state.dart';
 import '../../state/locale_state.dart';
 import '../../state/orders_state.dart';
+import '../widgets/order_status_visual.dart';
 import '../widgets/page_header.dart';
 import '../widgets/toast.dart';
 import 'order_detail_screen.dart';
@@ -110,10 +111,6 @@ class _OrderCard extends StatelessWidget {
   final Order order;
   const _OrderCard({required this.order});
 
-  String _statusLabel(bool ar) => ar
-      ? const {'prep': 'قيد التحضير', 'way': 'في الطريق', 'done': 'تم التوصيل'}[order.status] ?? 'قيد التحضير'
-      : const {'prep': 'Preparing', 'way': 'On the way', 'done': 'Delivered'}[order.status] ?? 'Preparing';
-
   @override
   Widget build(BuildContext context) {
     final ar = context.watch<LocaleState>().isArabic;
@@ -131,11 +128,9 @@ class _OrderCard extends StatelessWidget {
                 Text(order.id, style: const TextStyle(fontWeight: FontWeight.w700)),
                 Text(Formatters.dateShort(order.ts), style: const TextStyle(fontSize: 11, color: AppColors.muted)),
               ]),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(color: order.status == 'done' ? const Color(0xFFE7F8F0) : AppColors.blush, borderRadius: BorderRadius.circular(20)),
-                child: Text(_statusLabel(ar), style: TextStyle(color: order.status == 'done' ? AppColors.ok : AppColors.rose, fontWeight: FontWeight.w700, fontSize: 11)),
-              ),
+              // The API status as its own label/colour (English — the API
+              // has no Arabic status text). See orderStatusVisual.
+              OrderStatusBadge(status: order.status, raw: order.rawStatus),
             ]),
             const SizedBox(height: 10),
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
@@ -210,6 +205,10 @@ class _OrderCard extends StatelessWidget {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      // Keeps a tall sheet below the status bar / notch / Dynamic Island
+      // (otherwise its header and close button can end up under the
+      // clock and battery icons on iPhone and can't be tapped).
+      useSafeArea: true,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
       builder: (sheetContext) => Directionality(

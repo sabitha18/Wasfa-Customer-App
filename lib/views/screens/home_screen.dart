@@ -72,9 +72,20 @@ class _HomeBody extends StatelessWidget {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       double? lat;
       double? lng;
-      if (addressState.isCurrentLocationActive) {
-        lat = location.position?.latitude;
-        lng = location.position?.longitude;
+      // Same rule as the app bar's "Deliver to" label (AppTopBar): unless
+      // the user explicitly PICKED a saved address, the header shows the
+      // GPS location — so the store list must use those same GPS
+      // coordinates. Store ETA/distance only needs coordinates; whether
+      // the GPS place name matched a delivery area (isCurrentLocationActive)
+      // is irrelevant here. Previously a failed area-name match (e.g.
+      // "Kuwait City") silently switched stores to a geocoded saved
+      // address while the header still showed GPS — on iOS that geocode
+      // often failed → no lat/lng → every store "ETA unavailable".
+      final usingSavedAddress = !addressState.isCurrentLocationActive && addressState.selected != null;
+      final gps = location.position;
+      if (!usingSavedAddress && gps != null) {
+        lat = gps.latitude;
+        lng = gps.longitude;
       } else {
         final a = addressState.effectiveAddress;
         if (a != null) {

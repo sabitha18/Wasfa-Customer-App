@@ -368,6 +368,63 @@ class _CheckoutBody extends StatelessWidget {
                       ]),
                     ),
                   )
+                : a.id == null
+                // "Current location" (from GPS) — never a complete delivery
+                // address (no block/building, maybe no matched area). The
+                // user completes it into a saved address (form pre-filled
+                // from GPS) or picks a saved one. Place order is blocked
+                // until then (see _placeOrder).
+                ? Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      border: Border.all(color: AppColors.rose, width: 1.5),
+                      borderRadius: BorderRadius.circular(13),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(t('Current location', 'الموقع الحالي'), style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy, fontSize: 14)),
+                        if (a.formatted.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(a.formatted, style: const TextStyle(color: AppColors.muted, fontSize: 12, height: 1.4)),
+                        ],
+                        const SizedBox(height: 6),
+                        Text(
+                          t('Add your area, block and building to deliver here.', 'أضف المنطقة والقطعة والمبنى للتوصيل إلى هنا.'),
+                          style: const TextStyle(color: AppColors.rose, fontWeight: FontWeight.w600, fontSize: 12),
+                        ),
+                        const SizedBox(height: 9),
+                        Row(children: [
+                          GestureDetector(
+                            onTap: () async {
+                              final saved = await showAddressFormSheet(context, addressState, -1);
+                              // saveRemote already selected the new address;
+                              // select() also switches off "Current location"
+                              // so checkout reloads with the real address.
+                              if (saved == true && context.mounted) addressState.select(addressState.selectedIndex);
+                            },
+                            child: Row(mainAxisSize: MainAxisSize.min, children: [
+                              Text(t('Complete address', 'إكمال العنوان'), style: const TextStyle(color: AppColors.sky, fontWeight: FontWeight.w700, fontSize: 12)),
+                              const SizedBox(width: 3),
+                              const Icon(Icons.chevron_right_rounded, size: 14, color: AppColors.sky),
+                            ]),
+                          ),
+                          if (addressState.addresses.isNotEmpty) ...[
+                            const SizedBox(width: 18),
+                            GestureDetector(
+                              onTap: () => showAddressPickerSheet(context, addressState, context.read<LocationState>()),
+                              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                Text(t('Change address', 'تغيير العنوان'), style: const TextStyle(color: AppColors.sky, fontWeight: FontWeight.w600, fontSize: 12)),
+                                const SizedBox(width: 3),
+                                const Icon(Icons.chevron_right_rounded, size: 14, color: AppColors.sky),
+                              ]),
+                            ),
+                          ],
+                        ]),
+                      ],
+                    ),
+                  )
                 : GestureDetector(
               onTap: () => showAddressPickerSheet(context, addressState, context.read<LocationState>()),
               child: Container(
@@ -683,6 +740,21 @@ class _CheckoutBody extends StatelessWidget {
 
     if (address == null) {
       showErrorToast(context, t('Please add a delivery address before checking out.', 'يرجى إضافة عنوان توصيل قبل إتمام الطلب.'));
+      return;
+    }
+    // "Current location" (GPS, not a saved address) is never a complete
+    // delivery address — complete it into a saved address first. Doesn't
+    // auto-place afterwards: checkout reloads for the new address (its
+    // delivery fee may differ), so the customer reviews and taps again.
+    if (address.id == null) {
+      final saved = await showAddressFormSheet(context, addressState, -1);
+      if (!context.mounted) return;
+      if (saved == true) {
+        addressState.select(addressState.selectedIndex);
+        showToast(context, t('Address saved — please review your order and place it.', 'تم حفظ العنوان — يرجى مراجعة طلبك وتأكيده.'));
+      } else {
+        showErrorToast(context, t('Please complete your delivery address to continue.', 'يرجى إكمال عنوان التوصيل للمتابعة.'));
+      }
       return;
     }
     if (vm.pay == 'wallet' && orders.wallet < due) {
@@ -1144,6 +1216,10 @@ class _CheckoutBody extends StatelessWidget {
       context: context,
       backgroundColor: Colors.white,
       isScrollControlled: true,
+      // Keeps a tall sheet below the status bar / notch / Dynamic Island
+      // (otherwise its header and close button can end up under the
+      // clock and battery icons on iPhone and can't be tapped).
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
       builder: (sheetContext) => Directionality(
         textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
