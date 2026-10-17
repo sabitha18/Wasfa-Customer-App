@@ -22,6 +22,13 @@ class DeliveryCharge {
   /// Only present on the by-address variant.
   final int? addressId;
 
+  /// The AREA's centre point (backend confirmed 2026-10-16 — area lat/lng,
+  /// not the address's own). Null until filled for that area in the admin.
+  /// Used only for the Home store list's ETA/distance when a saved address
+  /// is selected — never for the fee, checkout or orders (those use ids).
+  final double? latitude;
+  final double? longitude;
+
   const DeliveryCharge({
     required this.areaId,
     required this.area,
@@ -31,6 +38,8 @@ class DeliveryCharge {
     required this.freeDeliveryApplied,
     required this.freeOverAmount,
     this.addressId,
+    this.latitude,
+    this.longitude,
   });
 
   factory DeliveryCharge.fromJson(Map<String, dynamic> json) => DeliveryCharge(
@@ -42,5 +51,12 @@ class DeliveryCharge {
         freeDeliveryApplied: asBool(json, const ['free_delivery_applied']),
         freeOverAmount: asDouble(json, const ['free_over_amount']),
         addressId: asIntOrNull(json, const ['address_id']),
+        latitude: asDoubleOrNull(json, const ['latitude']),
+        longitude: asDoubleOrNull(json, const ['longitude']),
       );
+
+  /// True only for usable coordinates inside Kuwait — guards against an
+  /// empty/0,0 or mis-entered value ever reaching /app/stores.
+  bool get hasKuwaitCoordinates =>
+      latitude != null && longitude != null && latitude! > 28.4 && latitude! < 30.2 && longitude! > 46.5 && longitude! < 48.7;
 }

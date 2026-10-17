@@ -130,8 +130,11 @@ class ProductCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.sky, letterSpacing: .3)),
                   const SizedBox(height: 3),
+                  // Reserves 2 lines of name at the CURRENT text size (was a
+                  // fixed 32 — the 2nd line got cut with larger text /
+                  // wide-screen scaling). Same look at default size.
                   SizedBox(
-                    height: 32,
+                    height: MediaQuery.textScalerOf(context).scale(32),
                     child: Text(
                       product.name(locale.isArabic),
                       maxLines: 2,
@@ -182,7 +185,7 @@ class ProductCard extends StatelessWidget {
                   // price below if it doesn't fit alongside) so wrapping can't
                   // change the card's total height and reintroduce overflow.
                   SizedBox(
-                    height: 34,
+                    height: MediaQuery.textScalerOf(context).scale(34),
                     child: Align(
                       alignment: Alignment.topLeft,
                       child: Wrap(

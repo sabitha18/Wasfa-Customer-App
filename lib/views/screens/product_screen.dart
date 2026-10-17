@@ -15,6 +15,7 @@ import '../widgets/product_image.dart';
 import '../widgets/html_content.dart';
 import '../widgets/review_sheet.dart';
 import '../widgets/toast.dart';
+import '../widgets/content_grid.dart';
 
 class ProductScreen extends StatelessWidget {
   final int productId;
@@ -543,21 +544,14 @@ class _AttrGrid extends StatelessWidget {
       (Icons.location_on_rounded, sel.stock ? (ar ? 'متوفر' : 'In stock') : (ar ? 'غير متوفر' : 'Out of stock')),
       (Icons.local_shipping_rounded, ar ? 'توصيل سريع' : 'Fast delivery'),
     ];
-    // Fixed badge height instead of `childAspectRatio: 2.8`. The ratio made
-    // the height follow the screen WIDTH, so wide phones (iPhone 15 Pro Max,
-    // 430pt) got much taller, mostly empty badges. 60 = what typical Android
-    // phones already showed with the ratio, so Android looks unchanged and
-    // iPhone now matches it.
-    return GridView(
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        mainAxisSpacing: 9,
-        crossAxisSpacing: 9,
-        mainAxisExtent: 60,
-      ),
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      children: [for (final it in items) _Attr(icon: it.$1, label: it.$2)],
+    // Content-sized rows (see content_grid.dart): each badge is exactly as
+    // tall as its icon + text, on every screen width / text size.
+    return ContentGrid(
+      columns: 2,
+      spacing: 9,
+      runSpacing: 9,
+      itemCount: items.length,
+      itemBuilder: (context, i) => _Attr(icon: items[i].$1, label: items[i].$2),
     );
   }
 }

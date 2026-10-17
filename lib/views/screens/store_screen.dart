@@ -19,6 +19,7 @@ import '../widgets/product_card.dart';
 import '../widgets/section_header.dart';
 import 'brands_screen.dart';
 import 'shop_screen.dart';
+import '../widgets/content_grid.dart';
 
 class StoreScreen extends StatelessWidget {
   final PharmacyStore store;
@@ -148,12 +149,13 @@ class _StoreBody extends StatelessWidget {
                   child: Padding(padding: EdgeInsets.symmetric(vertical: 34), child: Center(child: CircularProgressIndicator())),
                 )
               else
+                // Content-sized rows of 4 (see content_grid.dart): a square
+                // icon tile + its label, instead of a fixed .8 ratio whose
+                // height followed the screen width.
                 SliverToBoxAdapter(
-                  child: GridView.builder(
+                  child: ContentGrid(
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 4, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: .8),
+                    columns: 4,
                     itemCount: vm.categoriesInStore.length,
                     itemBuilder: (context, i) {
                       final c = vm.categoriesInStore[i];
@@ -161,8 +163,10 @@ class _StoreBody extends StatelessWidget {
                       return GestureDetector(
                         onTap: () => _openShop(context, category: c['cat']),
                         child: Column(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Expanded(
+                            AspectRatio(
+                              aspectRatio: 1,
                               child: Container(
                                 width: double.infinity,
                                 decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(14)),
@@ -228,7 +232,9 @@ class _StoreBody extends StatelessWidget {
                   child: Text(t('No results', 'لا توجد نتائج'), style: const TextStyle(color: AppColors.muted, fontSize: 13)),
                 )
                     : SizedBox(
-                  height: 62,
+                  // Scales with the text size (62 at default) so brand names
+                  // never clip with larger text.
+                  height: MediaQuery.textScalerOf(context).scale(62),
                   child: ListView.separated(
                     scrollDirection: Axis.horizontal,
                     padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -612,21 +618,18 @@ class _ProductRail extends StatelessWidget {
         ),
       );
     }
+    // Rail as tall as its tallest card (was a fixed 296 — empty space or
+    // clipping depending on text size / language). Cards match in height
+    // with their buttons aligned (ProductCard.fillHeight).
     return SliverToBoxAdapter(
-      child: SizedBox(
-        height: 296,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          itemCount: products.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 12),
-          itemBuilder: (context, i) => SizedBox(
-            width: 160,
-            child: ProductCard(
-              product: products[i],
-              onTap: () => onTapProduct(products[i]),
-            ),
-          ),
+      child: ContentRail(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: products.length,
+        itemWidth: 160,
+        itemBuilder: (context, i) => ProductCard(
+          product: products[i],
+          fillHeight: true,
+          onTap: () => onTapProduct(products[i]),
         ),
       ),
     );

@@ -70,6 +70,12 @@ class OrderService {
           if (latitude != null) 'lat': latitude,
           if (longitude != null) 'lng': longitude,
         },
+        // The selected SAVED address's id, as in the Postman "Place order"
+        // example — tells the backend exactly which address this order is
+        // for (the same one checkout-init priced). Sent only for a saved
+        // address (one with a server id); the address fields above are
+        // still sent as before.
+        if (address.id != null) 'address_id': address.id,
         if (deliveryDate != null && deliveryDate.isNotEmpty) 'delivery_date': deliveryDate,
         if (deliverySlot != null) 'delivery_slot': deliverySlot,
         'device': Platform.isIOS ? 'ios' : 'android',

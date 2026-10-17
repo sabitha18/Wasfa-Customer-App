@@ -8,6 +8,7 @@ import '../../state/auth_state.dart';
 import '../../state/cart_state.dart';
 import '../../state/locale_state.dart';
 import '../widgets/product_card.dart';
+import '../widgets/content_grid.dart';
 
 class WishlistScreen extends StatefulWidget {
   const WishlistScreen({super.key});
@@ -96,13 +97,22 @@ class _WishlistScreenState extends State<WishlistScreen> {
 
     return Directionality(
       textDirection: dir,
-      child: GridView.builder(
+      // Rows sized to their content (see content_grid.dart) instead of a
+      // fixed-ratio grid that left empty space under the button on wide
+      // phones.
+      child: ListView.builder(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: .50),
-        itemCount: products.length,
-        itemBuilder: (context, i) => ProductCard(
-          product: products[i],
-          onTap: () => Navigator.pushNamed(context, Routes.product, arguments: products[i].id),
+        itemCount: contentGridRowCount(products.length, 2),
+        itemBuilder: (context, row) => contentGridRow(
+          context: context,
+          row: row,
+          itemCount: products.length,
+          columns: 2,
+          itemBuilder: (context, i) => ProductCard(
+            product: products[i],
+            fillHeight: true,
+            onTap: () => Navigator.pushNamed(context, Routes.product, arguments: products[i].id),
+          ),
         ),
       ),
     );

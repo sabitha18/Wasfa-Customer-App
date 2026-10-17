@@ -95,7 +95,9 @@ class _ShopBody extends StatelessWidget {
     final inPharmacy = vm.pharmacy != null;
 
     // ── .sortbar height — used as the pinned SliverPersistentHeader extent ──
-    const double sortBarHeight = 54;
+    // Sticky headers need a fixed height; scale it with the text size so
+    // the Sort / Filter labels never clip (54 at default size, as before).
+    final double sortBarHeight = MediaQuery.textScalerOf(context).scale(54);
 
     // ── .sortbar — sticky gray bar with bordered buttons + vtog ──
     // In the HTML prototype this is the ONLY element with position:sticky;
@@ -154,18 +156,17 @@ class _ShopBody extends StatelessWidget {
       SliverToBoxAdapter(
         child: Padding(
           padding: const EdgeInsets.only(top: 10), // ← margin-top equivalent
-          child: SizedBox(
-            height: 38,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
-              children: [
+          child: SingleChildScrollView(
+            // Content height (was a fixed 38 — chip text could clip with
+            // larger text).
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
+            child: Row(children: [
                 _Chip(label: t('All', 'الكل'), on: vm.selectedParent == null, onTap: () => vm.selectParentCategory(null)),
                 for (final c in vm.categories)
                   _Chip(label: c.label(locale.isArabic), on: vm.selectedParent?.id == c.id, onTap: () => vm.selectParentCategory(c)),
-              ],
+              ]),
             ),
-          ),
         ),
       ),
       // ── .cats2 — subcategories, one horizontally-scrolling row per level
@@ -178,21 +179,20 @@ class _ShopBody extends StatelessWidget {
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.only(top: 10), // ← margin-top equivalent
-              child: SizedBox(
-                height: 38,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
-                  children: [
+              child: SingleChildScrollView(
+                // Content height (was a fixed 38 — chip text could clip with
+                // larger text).
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
+                child: Row(children: [
                     for (final sub in vm.selectedCategoryPath[_i].children)
                       _Chip(
                         label: sub.label(locale.isArabic), small: true,
                         on: _i + 1 < vm.selectedCategoryPath.length && vm.selectedCategoryPath[_i + 1].id == sub.id,
                         onTap: () => vm.selectSubCategory(sub),
                       ),
-                  ],
+                  ]),
                 ),
-              ),
             ),
           ),
 
@@ -470,7 +470,8 @@ class _ShopBody extends StatelessWidget {
                           const SizedBox(height: 8),
                           // ── small search box so a long brand list is still reachable ──
                           Container(
-                            height: 36,
+                            // min (not fixed) height — grows with larger text
+                            constraints: const BoxConstraints(minHeight: 36),
                             padding: const EdgeInsets.symmetric(horizontal: 12),
                             decoration: BoxDecoration(
                               color: AppColors.bg,
@@ -729,7 +730,8 @@ class _TopAppBar extends StatelessWidget {
         const SizedBox(height: 12),
         Container(
           width: double.infinity,
-          height: 44,
+          // min (not fixed) height — grows with larger text
+          constraints: const BoxConstraints(minHeight: 44),
           padding: const EdgeInsets.symmetric(horizontal: 10),
           decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(12)),
           child: Row(children: [

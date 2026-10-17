@@ -16,6 +16,7 @@ import 'shop_screen.dart';
 import '../widgets/open_product.dart';
 import '../widgets/section_header.dart';
 import '../widgets/store_avatar.dart';
+import '../widgets/content_grid.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -89,9 +90,23 @@ class _HomeBody extends StatelessWidget {
       } else {
         final a = addressState.effectiveAddress;
         if (a != null) {
-          final geocoded = await AddressGeocoder.instance.forAddress(a);
-          lat = geocoded.lat;
-          lng = geocoded.lng;
+          // 1st choice: the AREA's coordinates from the API (delivery-charge
+          // response for this same address/area) — exact on iOS and
+          // Android. 2nd (until the backend has them, or if the call
+          // failed): the phone's geocoder, as before. iOS's geocoder often
+          // returns Kuwait City centre for Kuwaiti area names, so the API
+          // value is what makes iOS correct.
+          final charge = addressState.currentDeliveryCharge;
+          if (charge != null &&
+              ((a.id != null && charge.addressId == a.id) || (a.areaId != null && charge.areaId == a.areaId)) &&
+              charge.hasKuwaitCoordinates) {
+            lat = charge.latitude;
+            lng = charge.longitude;
+          } else {
+            final geocoded = await AddressGeocoder.instance.forAddress(a);
+            lat = geocoded.lat;
+            lng = geocoded.lng;
+          }
         }
       }
       vm.refreshStoresIfLocationChanged(lat, lng);
@@ -131,16 +146,14 @@ class _HomeBody extends StatelessWidget {
 
           // ---- .sec + .nearrail — "Nearest stores" -------------------------------
           SliverToBoxAdapter(child: SectionHeader(title: t('Nearest stores', 'أقرب المتاجر'))),
+          // Rail as tall as its tallest card (was a fixed 195 — empty space
+          // under short names, clipped with long names / large text).
           SliverToBoxAdapter(
-            child: SizedBox(
-              height: 195,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
-                itemCount: vm.nearestStores.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 12),
-                itemBuilder: (context, i) => _NearStoreCard(store: vm.nearestStores[i]),
-              ),
+            child: ContentRail(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+              itemCount: vm.nearestStores.length,
+              itemWidth: 130,
+              itemBuilder: (context, i) => _NearStoreCard(store: vm.nearestStores[i]),
             ),
           ),
 
@@ -148,18 +161,17 @@ class _HomeBody extends StatelessWidget {
           SliverToBoxAdapter(child: SectionHeader(title: t('Browse all stores', 'تصفح جميع المتاجر'))),
 
           // ---- .storefilters -----------------------------------------------------
+          // Content height (was a fixed 50 — chip text could clip with
+          // large text).
           SliverToBoxAdapter(
-            child: SizedBox(
-              height: 50,
-              child: ListView(
+            child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.fromLTRB(16, 2, 16, 12),
-                children: [
+                child: Row(children: [
                   _FilterChip(label: t('Offers', 'العروض'), on: vm.storeFilters['offers']!, onTap: () => vm.toggleFilter('offers')),
                   _FilterChip(label: t('Under 30 mins', 'أقل من 30 دقيقة'), on: vm.storeFilters['under30']!, onTap: () => vm.toggleFilter('under30')),
                   _FilterChip(label: t('Free delivery', 'توصيل مجاني'), on: vm.storeFilters['free']!, onTap: () => vm.toggleFilter('free')),
-                ],
-              ),
+                ]),
             ),
           ),
 

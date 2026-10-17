@@ -7,6 +7,7 @@ import '../../state/locale_state.dart';
 import '../../viewmodels/shop_view_model.dart';
 import '../widgets/page_header.dart';
 import 'shop_screen.dart';
+import '../widgets/content_grid.dart';
 
 class BrandsScreen extends StatelessWidget {
   final PharmacyStore? store;
@@ -30,12 +31,22 @@ class BrandsScreen extends StatelessWidget {
       textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
       child: Scaffold(
       appBar: PageHeader(title: ar ? 'أفضل العلامات التجارية' : 'Top brands'),
-      body: GridView.builder(
+      // Rows sized to their content (see content_grid.dart) instead of a
+      // fixed-ratio grid (cell height followed screen width).
+      body: ListView.builder(
         padding: const EdgeInsets.all(16),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 2.2),
-        itemCount: list.length,
-        itemBuilder: (context, i) => OutlinedButton(
-          style: OutlinedButton.styleFrom(side: const BorderSide(color: AppColors.line, width: 1.5), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+        itemCount: contentGridRowCount(list.length, 2),
+        itemBuilder: (context, row) => contentGridRow(
+          context: context,
+          row: row,
+          itemCount: list.length,
+          columns: 2,
+          itemBuilder: (context, i) => OutlinedButton(
+          style: OutlinedButton.styleFrom(
+            side: const BorderSide(color: AppColors.line, width: 1.5),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 28),
+          ),
           onPressed: () => Navigator.push(
             context,
             MaterialPageRoute(
@@ -45,7 +56,8 @@ class BrandsScreen extends StatelessWidget {
               builder: (_) => ShopScreen(initialFilter: ShopFilter(pharmacy: store?.seller, shopId: store?.id, brand: list[i])),
             ),
           ),
-          child: Text(list[i], style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy)),
+          child: Text(list[i], textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.navy)),
+        ),
         ),
       ),
       ),
