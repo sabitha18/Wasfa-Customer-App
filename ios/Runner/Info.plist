@@ -27,7 +27,7 @@
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>NSCameraUsageDescription</key>
-    <string>Wasfa Rx needs camera access so you can attach a photo when requesting a return.</string>
+    <string>Wasfa Rx uses the camera so you can take a photo of a prescription, a product for a return request, or your profile picture.</string>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
     <string>Wasfa uses your location to show nearby pharmacies and set your delivery address.</string>
     <key>NSLocationAlwaysUsageDescription</key>
@@ -35,7 +35,7 @@
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>Wasfa uses your location to show nearby pharmacies and set your delivery address.</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>Wasfa Rx needs photo library access so you can attach a product photo when requesting a return.</string>
+    <string>Wasfa Rx uses your photos so you can attach a prescription, a product photo for a return request, or choose your profile picture.</string>
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>
@@ -70,8 +70,6 @@
     <key>UISupportedInterfaceOrientations</key>
     <array>
         <string>UIInterfaceOrientationPortrait</string>
-        <string>UIInterfaceOrientationLandscapeLeft</string>
-        <string>UIInterfaceOrientationLandscapeRight</string>
     </array>
     <key>UISupportedInterfaceOrientations~ipad</key>
     <array>
