@@ -6,7 +6,7 @@ class ApiConfig {
   ApiConfig._();
 
   /// Postman collection variable `base_url`.
-  static const String baseUrl = 'https://apixrx.com';
+  static const String baseUrl = 'https://wasfakw.com';
 
   /// Everything below is relative to `$baseUrl/api/v1`.
   static const String apiVersion = '/api/v1';
@@ -14,6 +14,14 @@ class ApiConfig {
   // ---- Login / OTP --------------------------------------------------------
   static const String otpRequest = '/otp/request';
   static const String otpVerify = '/otp/verify';
+
+  /// POST, form fields `user_id`, `phone` (e.g. "+965XXXXXXXX").
+  /// Response: `{ ok: true, msg: "Your account has been deleted" }`.
+  static const String accountDelete = '/account/delete';
+
+  /// GET, no auth. `{ android: {...}, ios: {...} }` — each with min_version,
+  /// latest_version, store_url, message, message_ar (set in the admin panel).
+  static const String appVersion = '/app/version';
 
   // ---- Home / browsing (anonymous) ----------------------------------------
   static const String home = '/app/home';

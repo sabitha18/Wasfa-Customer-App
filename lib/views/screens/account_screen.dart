@@ -17,6 +17,7 @@ import '../../state/location_state.dart';
 import '../../state/orders_state.dart';
 import '../widgets/address_sheets.dart';
 import '../widgets/html_content.dart';
+import '../widgets/toast.dart';
 
 /// Matches the HTML's `rAccount()`:
 /// - `.acc-head` — full-bleed sky→navy gradient banner (not a rounded card
@@ -166,7 +167,7 @@ class AccountScreen extends StatelessWidget {
 
             if (signedIn)
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 30),
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
                 child: SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
@@ -206,6 +207,24 @@ class AccountScreen extends StatelessWidget {
                       }
                     },
                     child: Text(t('Log out', 'تسجيل الخروج')),
+                  ),
+                ),
+              ),
+            // Account deletion (Google Play requirement) — signed-in users only.
+            if (signedIn)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 30),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: TextButton.icon(
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppColors.rose,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                    ),
+                    icon: const Icon(Icons.delete_outline_rounded, size: 19),
+                    label: Text(t('Delete account', 'حذف الحساب')),
+                    onPressed: () => _confirmDeleteAccount(context, ar),
                   ),
                 ),
               )
@@ -536,3 +555,58 @@ class _FaqAccordionItem extends StatelessWidget {
 /// used as a spacer between sections) is skipped rather than rendered as a
 /// blank gap.
 
+/// Account deletion: confirm → API → same clean-up as logout → Home.
+Future<void> _confirmDeleteAccount(BuildContext context, bool ar) async {
+  String t(String en, String arabic) => ar ? arabic : en;
+  final confirm = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => Directionality(
+      textDirection: ar ? TextDirection.rtl : TextDirection.ltr,
+      child: AlertDialog(
+        title: Text(t('Delete your account?', 'حذف حسابك؟')),
+        content: Text(t(
+          'Your account and personal information will be deleted. Prescription, order and payment records we are required by law to keep will be retained. This can\'t be undone.',
+          'سيتم حذف حسابك ومعلوماتك الشخصية. وسيتم الاحتفاظ بسجلات الوصفات والطلبات والمدفوعات التي يُلزمنا القانون بالاحتفاظ بها. لا يمكن التراجع عن هذا الإجراء.',
+        )),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(t('Cancel', 'إلغاء'))),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: AppColors.rose),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(t('Delete', 'حذف')),
+          ),
+        ],
+      ),
+    ),
+  );
+  if (confirm != true || !context.mounted) return;
+
+  final auth = context.read<AuthState>();
+  final user = auth.user;
+  if (user == null) return;
+  // Same format as the API expects ("+965XXXXXXXX"), whatever way the stored
+  // phone was saved ("51165211", "96551165211" or "+96551165211").
+  final digits = user.phone.replaceAll(RegExp(r'\D'), '');
+  final phone = digits.startsWith('965') ? '+$digits' : '+965$digits';
+
+  showBusyOverlay(context, message: t('Deleting your account…', 'جارٍ حذف حسابك…'));
+  try {
+    final msg = await AccountService.instance.deleteAccount(user.id, phone);
+    if (!context.mounted) return;
+    hideBusyOverlay(context);
+    // Same clean-up as Log out, so nothing of this account stays on the phone.
+    context.read<CartState>().reset();
+    context.read<AddressState>().reset();
+    context.read<OrdersState>().reset();
+    await NotificationHistoryStore.instance.clear();
+    if (!context.mounted) return;
+    await context.read<AuthState>().logout();
+    if (!context.mounted) return;
+    Navigator.of(context).popUntil((r) => r.isFirst);
+    showToast(context, msg.isNotEmpty ? msg : t('Your account has been deleted', 'تم حذف حسابك'));
+  } catch (e) {
+    if (!context.mounted) return;
+    hideBusyOverlay(context);
+    showErrorToast(context, describeError(e));
+  }
+}

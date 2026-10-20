@@ -27,6 +27,7 @@ dependencies:
   url_launcher: ^6.3.2
   go_sell_sdk_flutter: ^2.4.11
   flutter_svg: ^2.3.0
+  package_info_plus: ^8.3.0   # installed app version, for the force/optional update check
 dev_dependencies:
   flutter_test:
     sdk: flutter

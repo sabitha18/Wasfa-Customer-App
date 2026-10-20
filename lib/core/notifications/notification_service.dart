@@ -6,6 +6,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../routing/app_routes.dart';
 import '../../data/services/account_service.dart';
 import '../../data/services/notification_history_store.dart';
+import '../../firebase_options.dart';
 
 /// Must be a top-level (or static) function annotated exactly like this —
 /// FCM invokes it in a separate background isolate when a message arrives
@@ -28,7 +29,10 @@ import '../../data/services/notification_history_store.dart';
 /// `notification` pushes.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
+  // Same options as main.dart. Without them, iOS (which has no
+  // GoogleService-Info.plist in this project) fails to initialise Firebase
+  // in the background isolate, so data-only pushes were never shown there.
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   // ═══ Grep logcat for "WASFA_PUSH" to see exactly what backend actually
   // sends, in every app state — this is the single most useful thing to
   // check if tapping a notification isn't navigating anywhere: the code

@@ -65,6 +65,21 @@ class AccountService {
   /// Response shape is unconfirmed; callers should treat this as
   /// fire-and-confirm (throws on failure) rather than parsing a specific
   /// result from it.
+  /// `POST /account/delete` — permanently deletes the user's account
+  /// (Play Store account-deletion requirement). [phone] in the same format
+  /// as Postman: "+965XXXXXXXX". Returns the API's `msg` on success; throws
+  /// (with the API's message) on failure or `ok:false`.
+  Future<String> deleteAccount(int userId, String phone) async {
+    final res = await withFallbackMessage(
+      () => _client.post(ApiConfig.accountDelete, body: {'user_id': userId, 'phone': phone}),
+      'Couldn\'t delete your account right now. Please try again.',
+    );
+    if (res is Map && res['ok'] == false) {
+      throw ApiException((res['msg'] ?? res['message'] ?? 'Couldn\'t delete your account right now. Please try again.').toString());
+    }
+    return (res is Map ? (res['msg'] ?? '') : '').toString();
+  }
+
   Future<void> addToRxCart(int userId, String prescriptionId, List<String> itemIds) async {
     final body = <String, dynamic>{'user_id': userId, 'prescription_id': prescriptionId};
     for (var i = 0; i < itemIds.length; i++) {

@@ -3,10 +3,12 @@ import 'package:provider/provider.dart';
 import '../../core/notifications/notification_service.dart';
 import '../../core/routing/app_routes.dart';
 import '../../core/theme/app_colors.dart';
+import '../../data/services/app_version_service.dart';
 import '../../state/auth_state.dart';
 import '../../state/locale_state.dart';
 import '../../state/location_state.dart';
 import 'location_gate_screen.dart';
+import 'update_required_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -24,6 +26,10 @@ class _SplashScreenState extends State<SplashScreen> {
 
   Future<void> _boot() async {
     final location = context.read<LocationState>();
+    // Version gate (GET /app/version) — started now so it runs in parallel
+    // with the startup work below instead of adding to it. Never throws;
+    // any failure resolves to "no update".
+    final updateCheck = AppVersionService.instance.check();
     // Waited together (not just location) so Home builds with userId
     // already known. Previously this only awaited location, so Home's
     // ChangeNotifierProviders (HomeViewModel, ShopViewModel, etc.) got
@@ -42,6 +48,22 @@ class _SplashScreenState extends State<SplashScreen> {
       context.read<LocaleState>().restore(),
     ]);
     if (!mounted) return;
+
+    final update = await updateCheck;
+    if (!mounted) return;
+    final isArabic = context.read<LocaleState>().isArabic;
+    if (update.type == UpdateType.force) {
+      // Below min_version: block the app entirely until it's updated.
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => UpdateRequiredScreen(result: update, isArabic: isArabic)),
+      );
+      return;
+    }
+    if (update.type == UpdateType.optional) {
+      // Below latest_version: offer it once per launch, then carry on.
+      await showOptionalUpdateDialog(context, update, isArabic);
+      if (!mounted) return;
+    }
 
     // Started here — not in main() — and deliberately not awaited. See
     // the comment in main.dart for why: by this point location's own
