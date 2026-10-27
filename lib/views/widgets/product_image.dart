@@ -23,12 +23,17 @@ class ProductImage extends StatelessWidget {
         color: AppColors.blush,
       );
     }
-    return SizedBox(
+    // Whole photo visible (contain, not cover): product photos have very
+    // different shapes (tall tubes, wide boxes) and `cover` cropped them.
+    // White behind the photo so the empty sides blend with the white card.
+    return Container(
       height: height,
       width: width ?? double.infinity,
+      color: Colors.white,
+      padding: EdgeInsets.all(height >= 100 ? 8 : 2),
       child: Image.network(
         url,
-        fit: BoxFit.cover,
+        fit: BoxFit.contain,
         loadingBuilder: (context, child, progress) {
           if (progress == null) return child;
           return Container(

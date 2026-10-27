@@ -130,7 +130,7 @@ class _ProductBody extends StatelessWidget {
                 const SizedBox(height: 9),
                 // .attrs — 2-col grid, gap:9px, margin:15px 0
                 _AttrGrid(sel: sel),
-                const SizedBox(height: 6),
+                const SizedBox(height: 12),
                 // .h-lbl — 14.5px/700/navy
                 Text(t('Key benefits', 'الفوائد الرئيسية'), style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: AppColors.navy)),
                 const SizedBox(height: 10),
@@ -410,12 +410,15 @@ class _ProductGalleryState extends State<_ProductGallery> {
       children: [
         GestureDetector(
           onTap: () => _openFullScreen(_index),
-          child: SizedBox(
+          // Whole photo visible on white (was `cover`, which cropped tall
+          // or wide product photos).
+          child: Container(
             height: 220,
             width: double.infinity,
+            color: Colors.white,
             child: Image.network(
               heroUrl,
-              fit: BoxFit.cover,
+              fit: BoxFit.contain,
               errorBuilder: (_, __, ___) => Container(color: AppColors.blush),
             ),
           ),
@@ -445,7 +448,7 @@ class _ProductGalleryState extends State<_ProductGallery> {
                         borderRadius: BorderRadius.circular(6),
                         child: Image.network(
                           photos[i],
-                          fit: BoxFit.cover,
+                          fit: BoxFit.contain,
                           errorBuilder: (_, __, ___) => Container(color: AppColors.blush),
                         ),
                       ),
@@ -548,8 +551,8 @@ class _AttrGrid extends StatelessWidget {
     // tall as its icon + text, on every screen width / text size.
     return ContentGrid(
       columns: 2,
-      spacing: 9,
-      runSpacing: 9,
+      spacing: 10,
+      runSpacing: 6, // small gap between the two rows (client request)
       itemCount: items.length,
       itemBuilder: (context, i) => _Attr(icon: items[i].$1, label: items[i].$2),
     );
@@ -562,14 +565,16 @@ class _Attr extends StatelessWidget {
   const _Attr({required this.icon, required this.label});
   @override
   Widget build(BuildContext context) {
+    // Bigger icon/text (client request), with little vertical padding so
+    // the rows stay close together.
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(11)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 16, color: AppColors.ok),
-        const SizedBox(width: 9),
+        Icon(icon, size: 20, color: AppColors.ok),
+        const SizedBox(width: 10),
         Expanded(
-          child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: AppColors.navy)),
+          child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.navy)),
         ),
       ]),
     );

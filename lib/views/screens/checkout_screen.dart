@@ -935,7 +935,10 @@ class _CheckoutBody extends StatelessWidget {
         showToast(context, t('Order placed! Tracking #$code', 'تم تقديم الطلب! رقم التتبع #$code'));
       }
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => TrackScreen(orderId: code)),
+        // Success hero only when the order went through cleanly — not when
+        // payment is still unconfirmed (that case shows a "don't pay again"
+        // warning instead).
+        MaterialPageRoute(builder: (_) => TrackScreen(orderId: code, justPlaced: verified != TapChargeOutcome.pending)),
         (route) => route.isFirst,
       );
     } catch (e) {
@@ -1146,7 +1149,7 @@ class _CheckoutBody extends StatelessWidget {
         final code = succeeded.first.orderCode;
         if (code != null) {
           Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => TrackScreen(orderId: code)),
+            MaterialPageRoute(builder: (_) => TrackScreen(orderId: code, justPlaced: true)),
             (route) => route.isFirst,
           );
         } else {

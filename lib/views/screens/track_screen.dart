@@ -13,10 +13,16 @@ import '../../state/orders_state.dart';
 import '../widgets/page_header.dart';
 import '../widgets/toast.dart';
 import '../widgets/order_status_visual.dart';
+import '../widgets/order_success_hero.dart';
 
 class TrackScreen extends StatefulWidget {
   final String orderId;
-  const TrackScreen({super.key, required this.orderId});
+
+  /// True only when opened right after an order was successfully placed —
+  /// shows the "Order placed successfully" hero instead of the map / truck
+  /// banner (client design). From My orders → Track it stays false.
+  final bool justPlaced;
+  const TrackScreen({super.key, required this.orderId, this.justPlaced = false});
 
   @override
   State<TrackScreen> createState() => _TrackScreenState();
@@ -139,7 +145,13 @@ class _TrackScreenState extends State<TrackScreen> {
             // actually on the way. Before that (and after delivery) there's
             // nothing real to show, so we show a status card instead of a
             // fake/static map.
-            _TrackMapArea(status: status, lat: _lat, lng: _lng, onMapCreated: (c) => _mapController = c),
+            // Right after placing the order: success hero instead of the
+            // truck banner — unless a live rider location already exists,
+            // in which case the map is more useful.
+            if (widget.justPlaced && !(status == 'way' && _lat != null && _lng != null))
+              OrderSuccessHero(isArabic: context.watch<LocaleState>().isArabic)
+            else
+              _TrackMapArea(status: status, lat: _lat, lng: _lng, onMapCreated: (c) => _mapController = c),
 
             // ── .ridercard ──
             Container(

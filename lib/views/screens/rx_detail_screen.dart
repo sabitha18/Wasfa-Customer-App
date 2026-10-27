@@ -217,9 +217,9 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(t('Note', 'ملاحظة'), style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: AppColors.muted)),
+                  Text(t('Note', 'ملاحظة'), style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.muted)),
                   const SizedBox(height: 4),
-                  Text(rx.note, style: const TextStyle(fontSize: 13, color: AppColors.ink)),
+                  Text(rx.note, style: const TextStyle(fontSize: 14, color: AppColors.ink)),
                 ],
               ),
             ),
@@ -248,12 +248,12 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
                   children: [
                     const Text('⏳', style: TextStyle(fontSize: 32)),
                     const SizedBox(height: 10),
-                    Text(t('Price request sent', 'تم إرسال طلب السعر'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: AppColors.navy)),
+                    Text(t('Price request sent', 'تم إرسال طلب السعر'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16.5, color: AppColors.navy)),
                     const SizedBox(height: 6),
                     Text(
                       t('Our pharmacist is reviewing your prescription and will submit pricing shortly.', 'يقوم الصيدلي بمراجعة وصفتك وسيقدم الأسعار قريباً.'),
                       textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 12.5, color: AppColors.muted),
+                      style: const TextStyle(fontSize: 14, color: AppColors.muted, height: 1.4),
                     ),
                   ],
                 ),
@@ -275,7 +275,7 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
                     Text(
                       t('Your prescription is under pharmacist review. Request pricing to speed up the process.', 'وصفتك قيد مراجعة الصيدلي. اطلب التسعير لتسريع العملية.'),
                       textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 12.5, color: AppColors.muted),
+                      style: const TextStyle(fontSize: 14, color: AppColors.muted, height: 1.4),
                     ),
                     const SizedBox(height: 14),
                     SizedBox(
@@ -284,12 +284,12 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.sky,
                           foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          padding: const EdgeInsets.symmetric(vertical: 15),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                           elevation: 0,
                         ),
                         onPressed: _requesting ? null : () => _requestPrices(context),
-                        child: Text(_requesting ? t('Requesting…', 'جارٍ الطلب…') : t('Request Price', 'طلب السعر'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                        child: Text(_requesting ? t('Requesting…', 'جارٍ الطلب…') : t('Request Price', 'طلب السعر'), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
                       ),
                     ),
                   ],
@@ -313,7 +313,7 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.navy,
               foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 14),
+              padding: const EdgeInsets.symmetric(vertical: 15),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               elevation: 0,
             ),
@@ -321,9 +321,9 @@ class _RxDetailScreenState extends State<RxDetailScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.shopping_bag_outlined, size: 17),
+                const Icon(Icons.shopping_bag_outlined, size: 19),
                 const SizedBox(width: 8),
-                Text(ar ? 'إضافة الكل إلى سلة الوصفات' : 'Add all to RX cart', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                Text(ar ? 'إضافة الكل إلى سلة الوصفات' : 'Add all to RX cart', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
               ],
             ),
           ),
@@ -482,13 +482,14 @@ class _MetaRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 11),
+      padding: const EdgeInsets.symmetric(vertical: 13),
       decoration: BoxDecoration(
         border: showDivider ? const Border(bottom: BorderSide(color: AppColors.line, width: 1)) : null,
       ),
       child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text(label, style: const TextStyle(color: AppColors.muted, fontSize: 12.5)),
-        Flexible(child: Text(value, textAlign: TextAlign.end, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5, color: AppColors.navy))),
+        Text(label, style: const TextStyle(color: AppColors.muted, fontSize: 14)),
+        const SizedBox(width: 12),
+        Flexible(child: Text(value, textAlign: TextAlign.end, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.navy))),
       ]),
     );
   }
@@ -524,7 +525,7 @@ class _RxItemCard extends StatelessWidget {
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: AppColors.shSm),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -534,7 +535,7 @@ class _RxItemCard extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 12),
             child: Row(children: [
               Container(
-                width: 46, height: 46,
+                width: 54, height: 54,
                 decoration: BoxDecoration(color: AppColors.blush, borderRadius: BorderRadius.circular(11)),
                 alignment: Alignment.center,
                 child: (item.imageUrl != null && item.imageUrl!.isNotEmpty)
@@ -542,8 +543,8 @@ class _RxItemCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(11),
                         child: Image.network(
                           item.imageUrl!,
-                          width: 46, height: 46,
-                          fit: BoxFit.cover,
+                          width: 54, height: 54,
+                          fit: BoxFit.contain,
                           errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                         ),
                       )
@@ -552,14 +553,14 @@ class _RxItemCard extends StatelessWidget {
               const SizedBox(width: 11),
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(item.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5, color: AppColors.navy)),
+                  Text(item.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: AppColors.navy)),
                   if (item.dosage.trim().isNotEmpty) ...[
                     const SizedBox(height: 2),
-                    Text('💊 ${item.dosage}', style: const TextStyle(fontSize: 11, color: AppColors.muted)),
+                    Text('💊 ${item.dosage}', style: const TextStyle(fontSize: 12.5, color: AppColors.muted)),
                   ],
                   if (item.note.trim().isNotEmpty) ...[
                     const SizedBox(height: 2),
-                    Text(item.note, style: const TextStyle(fontSize: 11, color: AppColors.muted, fontStyle: FontStyle.italic)),
+                    Text(item.note, style: const TextStyle(fontSize: 12.5, color: AppColors.muted, fontStyle: FontStyle.italic)),
                   ],
                 ]),
               ),
@@ -574,10 +575,10 @@ class _RxItemCard extends StatelessWidget {
             // to also have seller data attached. ──
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(color: AppColors.blush, borderRadius: BorderRadius.circular(10)),
               child: Text(ar ? 'مقيّد · استلام فقط' : 'Restricted · Pickup Only', textAlign: TextAlign.center,
-                  style: const TextStyle(color: AppColors.rose, fontSize: 12, fontWeight: FontWeight.w700)),
+                  style: const TextStyle(color: AppColors.rose, fontSize: 13.5, fontWeight: FontWeight.w700)),
             )
           else if (!restricted && stockSel != null && !stockSel.stock) ...[
             // ── Out of stock — the only/best-priced seller for this item
@@ -589,10 +590,10 @@ class _RxItemCard extends StatelessWidget {
             // "Restricted" for this.
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(color: const Color(0xFFFFF4E0), borderRadius: BorderRadius.circular(10)),
               child: Text(ar ? '⚠ غير متوفر' : '⚠ Out of stock', textAlign: TextAlign.center,
-                  style: const TextStyle(color: Color(0xFFB8720A), fontSize: 12, fontWeight: FontWeight.w700)),
+                  style: const TextStyle(color: Color(0xFFB8720A), fontSize: 13.5, fontWeight: FontWeight.w700)),
             ),
             if (priced) ...[
               // Confirmed against a real "Price Submitted" prescription
@@ -613,8 +614,8 @@ class _RxItemCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(13),
                 ),
                 child: Row(children: [
-                  Expanded(child: Text(stockSel.name, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.ink))),
-                  Text(Formatters.money(stockSel.price), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.navy)),
+                  Expanded(child: Text(stockSel.name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.ink))),
+                  Text(Formatters.money(stockSel.price), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.navy)),
                 ]),
               ),
             ],
@@ -632,8 +633,8 @@ class _RxItemCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(13),
               ),
               child: Row(children: [
-                Expanded(child: Text(sel.name, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.ink))),
-                Text(Formatters.money(sel.price), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.navy)),
+                Expanded(child: Text(sel.name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.ink))),
+                Text(Formatters.money(sel.price), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.navy)),
               ]),
             ),
             // ── .btn.btn-sky — "+ Add · {price}" ──
@@ -643,7 +644,7 @@ class _RxItemCard extends StatelessWidget {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.sky,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   elevation: 0,
                 ),
@@ -651,9 +652,9 @@ class _RxItemCard extends StatelessWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.add, size: 16),
+                    const Icon(Icons.add, size: 18),
                     const SizedBox(width: 6),
-                    Text('${ar ? "إضافة" : "Add"} · ${Formatters.money(sel.price)}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+                    Text('${ar ? "إضافة" : "Add"} · ${Formatters.money(sel.price)}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
                   ],
                 ),
               ),

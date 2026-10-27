@@ -459,7 +459,7 @@ class _CartLineTile extends StatelessWidget {
                       child: Image.network(
                         imageUrl,
                         width: 60, height: 60,
-                        fit: BoxFit.cover,
+                        fit: BoxFit.contain,
                         errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                       ),
                     )

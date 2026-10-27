@@ -143,7 +143,7 @@ class _MyRxScreenState extends State<MyRxScreen> {
                 : ListView.separated(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
               itemCount: list.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 12),
+              separatorBuilder: (_, __) => const SizedBox(height: 14),
               itemBuilder: (context, i) => _RxCard(rx: list[i], onUpdated: () => setState(() {})),
             ),
           ),
@@ -206,8 +206,11 @@ class _RxCardState extends State<_RxCard> {
     // entire screen for every prescription in the list, not just this card.
     final first = rx.items.isEmpty ? null : rx.items.first;
 
+    // Sizes increased a little (client request): padding 16, ID 15, date 12,
+    // status 12, doctor/clinic 13.5, item 14/12, View prescription 14, and
+    // a clearly bigger Request Price button (13, padding 16×9).
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: AppColors.shSm),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -216,22 +219,30 @@ class _RxCardState extends State<_RxCard> {
           // pill is always passive — "Request Price" is a separate button
           // shown alongside it, not the pill itself ──
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            GestureDetector(
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => RxDetailScreen(rxId: rx.id))),
-              child: Row(children: [
-                Container(
-                  width: 34, height: 34,
-                  decoration: BoxDecoration(color: AppColors.navy, borderRadius: BorderRadius.circular(10)),
-                  alignment: Alignment.center,
-                  child: const Text('℞', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
-                ),
-                const SizedBox(width: 9),
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(rx.id, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5, color: AppColors.navy)),
-                  Text(Formatters.displayDate(rx.date), style: const TextStyle(fontSize: 10.5, color: AppColors.muted)),
+            // Expanded so a long ID never pushes the status / Request Price
+            // button off a narrow screen (ID ellipsizes instead).
+            Expanded(
+              child: GestureDetector(
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => RxDetailScreen(rxId: rx.id))),
+                child: Row(children: [
+                  Container(
+                    width: 38, height: 38,
+                    decoration: BoxDecoration(color: AppColors.navy, borderRadius: BorderRadius.circular(11)),
+                    alignment: Alignment.center,
+                    child: const Text('℞', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
+                  ),
+                  const SizedBox(width: 10),
+                  Flexible(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(rx.id, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: AppColors.navy)),
+                      const SizedBox(height: 2),
+                      Text(Formatters.displayDate(rx.date), style: const TextStyle(fontSize: 12, color: AppColors.muted)),
+                    ]),
+                  ),
                 ]),
-              ]),
+              ),
             ),
+            const SizedBox(width: 8),
             // Confirmed against the reference web app (2026-07-30): the
             // status pill is ALWAYS passive — Pending (gray), Pharmacist
             // Review (amber), Price Submitted (mint-green) — never itself
@@ -243,7 +254,7 @@ class _RxCardState extends State<_RxCard> {
               final canAsk = rx.isPending && rx.canRequestPrice;
               return Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                   decoration: BoxDecoration(
                     color: rx.isPriced ? const Color(0xFFE3F5EA) : (rx.isInReview ? const Color(0xFFFFF1DC) : AppColors.blush),
                     borderRadius: BorderRadius.circular(9),
@@ -251,22 +262,22 @@ class _RxCardState extends State<_RxCard> {
                   child: Text(
                     rx.statusLabel(ar),
                     style: TextStyle(
-                      fontSize: 10,
+                      fontSize: 12,
                       fontWeight: FontWeight.w700,
                       color: rx.isPriced ? AppColors.ok : (rx.isInReview ? const Color(0xFFB8720A) : AppColors.rose),
                     ),
                   ),
                 ),
                 if (canAsk) ...[
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 8),
                   GestureDetector(
                     onTap: _requesting ? null : () => _requestPrices(context, rx),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(color: AppColors.sky, borderRadius: BorderRadius.circular(9)),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                      decoration: BoxDecoration(color: AppColors.sky, borderRadius: BorderRadius.circular(10)),
                       child: Text(
                         _requesting ? (ar ? 'جارٍ الطلب…' : 'Requesting…') : (ar ? 'طلب السعر' : 'Request Price'),
-                        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white),
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white),
                       ),
                     ),
                   ),
@@ -274,12 +285,12 @@ class _RxCardState extends State<_RxCard> {
               ]);
             }),
           ]),
-          const SizedBox(height: 9),
+          const SizedBox(height: 11),
           GestureDetector(
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => RxDetailScreen(rxId: rx.id))),
             child: Text.rich(TextSpan(children: [
-              TextSpan(text: '${Formatters.orDash(rx.doctorLine)}\n', style: const TextStyle(color: AppColors.ink, fontSize: 12, height: 1.5)),
-              TextSpan(text: Formatters.orDash(rx.clinic), style: const TextStyle(color: AppColors.sky, fontSize: 12, height: 1.5)),
+              TextSpan(text: '${Formatters.orDash(rx.doctorLine)}\n', style: const TextStyle(color: AppColors.ink, fontSize: 13.5, height: 1.5)),
+              TextSpan(text: Formatters.orDash(rx.clinic), style: const TextStyle(color: AppColors.sky, fontSize: 13.5, height: 1.5)),
             ])),
           ),
           const SizedBox(height: 10),
@@ -301,7 +312,7 @@ class _RxCardState extends State<_RxCard> {
                     decoration: BoxDecoration(color: AppColors.bg, borderRadius: BorderRadius.circular(11)),
                     child: Row(children: [
                       Container(
-                        width: 40, height: 40,
+                        width: 46, height: 46,
                         decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(9)),
                         alignment: Alignment.center,
                         child: (item.imageUrl != null && item.imageUrl!.isNotEmpty)
@@ -309,8 +320,8 @@ class _RxCardState extends State<_RxCard> {
                                 borderRadius: BorderRadius.circular(9),
                                 child: Image.network(
                                   item.imageUrl!,
-                                  width: 40, height: 40,
-                                  fit: BoxFit.cover,
+                                  width: 46, height: 46,
+                                  fit: BoxFit.contain,
                                   errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                                 ),
                               )
@@ -320,9 +331,9 @@ class _RxCardState extends State<_RxCard> {
                       Expanded(
                         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                           Text(item.name, maxLines: 1, overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5, color: AppColors.navy)),
+                              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: AppColors.navy)),
                           const SizedBox(height: 2),
-                          Text(item.dosage, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10.5, color: AppColors.muted)),
+                          Text(item.dosage, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: AppColors.muted)),
                         ]),
                       ),
                     ]),
@@ -350,7 +361,7 @@ class _RxCardState extends State<_RxCard> {
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => RxDetailScreen(rxId: rx.id))),
               child: Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 10),
+                padding: const EdgeInsets.symmetric(vertical: 12),
                 decoration: BoxDecoration(
                   border: Border.all(color: AppColors.line, width: 1.5),
                   borderRadius: BorderRadius.circular(10),
@@ -358,9 +369,9 @@ class _RxCardState extends State<_RxCard> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(ar ? 'عرض الوصفة' : 'View prescription', style: const TextStyle(color: AppColors.navy, fontWeight: FontWeight.w700, fontSize: 12.5)),
+                    Text(ar ? 'عرض الوصفة' : 'View prescription', style: const TextStyle(color: AppColors.navy, fontWeight: FontWeight.w700, fontSize: 14)),
                     const SizedBox(width: 5),
-                    Icon(ar ? Icons.chevron_left_rounded : Icons.chevron_right_rounded, size: 16, color: AppColors.navy),
+                    Icon(ar ? Icons.chevron_left_rounded : Icons.chevron_right_rounded, size: 18, color: AppColors.navy),
                   ],
                 ),
               ),

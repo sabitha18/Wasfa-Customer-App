@@ -92,7 +92,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
             : ListView.separated(
                 padding: const EdgeInsets.all(16),
                 itemCount: orders.orders.length + (orders.ordersError != null ? 1 : 0),
-                separatorBuilder: (_, __) => const SizedBox(height: 12),
+                separatorBuilder: (_, __) => const SizedBox(height: 14), // same as My requests
                 itemBuilder: (context, i) {
                   if (orders.ordersError != null && i == 0) {
                     return InlineErrorBanner(message: orders.ordersError!, onRetry: () => orders.loadMyOrders(auth.userId!));
@@ -117,39 +117,47 @@ class _OrderCard extends StatelessWidget {
     String t(String en, String arabic) => ar ? arabic : en;
     return GestureDetector(
       onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => OrderDetailScreen(orderId: order.id))),
+      // Same dimensions as the My requests card (client request): padding
+      // 15/13/15/12, title 13.5 navy, date 10.5, amount 15 bold navy.
       child: Container(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.fromLTRB(15, 13, 15, 12),
         decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: AppColors.shSm),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(order.id, style: const TextStyle(fontWeight: FontWeight.w700)),
-                Text(Formatters.dateShort(order.ts), style: const TextStyle(fontSize: 11, color: AppColors.muted)),
-              ]),
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(order.id, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.navy)),
+                  const SizedBox(height: 2),
+                  Text(Formatters.dateShort(order.ts), style: const TextStyle(fontSize: 12, color: AppColors.muted, fontWeight: FontWeight.w500)),
+                ]),
+              ),
               // The API status as its own label/colour (English — the API
               // has no Arabic status text). See orderStatusVisual.
-              OrderStatusBadge(status: order.status, raw: order.rawStatus),
+              OrderStatusBadge(status: order.status, raw: order.rawStatus, large: true),
             ]),
             const SizedBox(height: 10),
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Text(
-                // pharmacyCount now falls back to the confirmed
-                // "pharmacies" count from /my-orders when there's no
-                // groups breakdown to count directly (the list endpoint's
-                // shape) — no longer needs to omit this for list orders.
-                order.pharmacyCount > 0
-                    ? '${Formatters.money(order.total)} · ${order.itemCount} ${t("items", "عناصر")} · ${order.pharmacyCount} 🏪'
-                    : '${Formatters.money(order.total)} · ${order.itemCount} ${t("items", "عناصر")}',
-                style: const TextStyle(fontSize: 12.5),
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(Formatters.money(order.total), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.navy)),
+                  Text(
+                    // pharmacyCount falls back to the "pharmacies" count from
+                    // /my-orders when there's no groups breakdown.
+                    order.pharmacyCount > 0
+                        ? '${order.itemCount} ${t("items", "عناصر")} · ${order.pharmacyCount} 🏪'
+                        : '${order.itemCount} ${t("items", "عناصر")}',
+                    style: const TextStyle(fontSize: 12, color: AppColors.muted),
+                  ),
+                ]),
               ),
               InkWell(
                 onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => TrackScreen(orderId: order.id))),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Text(t('Track', 'تتبع'), style: const TextStyle(color: AppColors.sky, fontWeight: FontWeight.w700, fontSize: 12.5)),
+                  Text(t('Track', 'تتبع'), style: const TextStyle(color: AppColors.sky, fontWeight: FontWeight.w700, fontSize: 14)),
                   const SizedBox(width: 3),
-                  Icon(ar ? Icons.chevron_left_rounded : Icons.chevron_right_rounded, color: AppColors.sky, size: 16),
+                  Icon(ar ? Icons.chevron_left_rounded : Icons.chevron_right_rounded, color: AppColors.sky, size: 18),
                 ]),
               ),
             ]),

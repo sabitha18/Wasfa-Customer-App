@@ -177,7 +177,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                                   child: Image.network(
                                     it.imageUrl!,
                                     width: 40, height: 40,
-                                    fit: BoxFit.cover,
+                                    fit: BoxFit.contain,
                                     errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                                   ),
                                 )

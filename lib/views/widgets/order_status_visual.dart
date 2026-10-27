@@ -75,15 +75,20 @@ bool isTerminalSideStatus(String status) => const {'cancelled', 'return_requeste
 class OrderStatusBadge extends StatelessWidget {
   final String status;
   final String raw;
-  const OrderStatusBadge({super.key, required this.status, this.raw = ''});
+
+  /// Bigger text/padding — used only on the My orders list (client asked
+  /// for a larger status there). Order details / track keep the default.
+  final bool large;
+  const OrderStatusBadge({super.key, required this.status, this.raw = '', this.large = false});
 
   @override
   Widget build(BuildContext context) {
     final v = orderStatusVisual(status, raw: raw);
+    // Same shape/size as the My requests status badge (client request).
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(color: v.bg, borderRadius: BorderRadius.circular(20)),
-      child: Text(v.label, style: TextStyle(color: v.fg, fontWeight: FontWeight.w700, fontSize: 11)),
+      padding: large ? const EdgeInsets.symmetric(horizontal: 12, vertical: 7) : const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+      decoration: BoxDecoration(color: v.bg, borderRadius: BorderRadius.circular(9)),
+      child: Text(v.label, style: TextStyle(color: v.fg, fontWeight: FontWeight.w700, fontSize: large ? 12 : 10)),
     );
   }
 }
